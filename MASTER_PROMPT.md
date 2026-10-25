@@ -92,6 +92,6 @@ ASL is a real language of the Deaf community. Use accurate reference images, cre
 
 ## Status (update as you go)
 - Current milestone: 3 (single-player loop), with 1–2 done
-- Working: webcam + MediaPipe HandLandmarker; rule-based classifier over A B C D I L O V W Y; hold-to-pass rounds (no timing window); hidden sign database; static build auto-deployed to GitHub Pages
-- Broken / blocked: no multiplayer, no room codes, no 3D wall; thresholds not yet calibrated against real signers
+- Working: webcam + MediaPipe HandLandmarker; rule-based classifier over the full A–Z alphabet plus Hook 'em Horns, with J and Z as traced paths; hold-to-pass rounds (no timing window); practice and 10-second sprint modes; per-browser high scores; chime and green flash on a landed sign; hidden sign database; static build auto-deployed to GitHub Pages
+- Broken / blocked: no multiplayer, no room codes, no 3D wall; thresholds calibrated against synthetic hands only — M/N/T, A/S/E and G/Q need checking against real signers
 - Next: milestone 4 — two-device rooms with a shared seed

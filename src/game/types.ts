@@ -38,8 +38,18 @@ export type FeatureKey =
   | 'thumbSplay'
   | 'thumbIndexPinch'
   | 'thumbMiddlePinch'
+  | 'thumbRingPinch'
+  | 'thumbPinkyPinch'
   | 'thumbAcrossPalm'
-  | 'fingertipGather';
+  | 'fingertipGather'
+  // The letters below need more than a rotation-free shape. Only rows that
+  // ask for these give up rotation tolerance; every other sign keeps it.
+  | 'pointingUp'
+  | 'thumbInIndexGap'
+  | 'thumbInMiddleGap'
+  | 'thumbInRingGap'
+  | 'indexMiddleConverge'
+  | 'thumbUnderFingers';
 
 export type FeatureVector = Readonly<Record<FeatureKey, number>>;
 
@@ -56,6 +66,19 @@ export interface Expectation {
   coach: string;
 }
 
+/**
+ * A path the fingertip has to travel while the handshape is held. Each leg is
+ * a direction in image space and how far the tip must move along it, as a
+ * fraction of palm width. Legs must happen in order.
+ */
+export interface MotionTemplate {
+  /** Which fingertip is traced. */
+  tip: 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
+  legs: readonly { direction: 'up' | 'down' | 'sideways'; travel: number }[];
+  /** How long the whole path may take. */
+  windowMs: number;
+}
+
 export interface SignDefinition {
   id: string;
   /** The letter as it is written, e.g. "A". */
@@ -64,6 +87,8 @@ export interface SignDefinition {
   label: string;
   hint: string;
   expects: readonly Expectation[];
+  /** Set only on the signs that are a movement, not a pose. */
+  motion?: MotionTemplate;
 }
 
 export interface Recognition {
@@ -84,4 +109,14 @@ export interface SignAttempt {
   timeMs: number;
   completed: boolean;
   points: number;
+}
+
+/** Practice plays a fixed list of signs; sprint is a race against the clock. */
+export type GameMode = 'practice' | 'sprint';
+
+export interface HighScore {
+  /** Points in practice, signs landed in sprint. */
+  score: number;
+  /** When it was set, as an ISO date. */
+  setOn: string;
 }

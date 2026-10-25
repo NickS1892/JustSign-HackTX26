@@ -211,11 +211,15 @@ async function applyRoute() {
   sidebar.style.display = isHome ? 'none' : '';
   const mobileHeader = app.querySelector('.mobile-header') as HTMLElement;
   if (mobileHeader) mobileHeader.style.display = isHome ? 'none' : '';
+  // The demo shell's mobile header is `display: flex !important` under a media
+  // query, so hiding it inline does nothing on a narrow screen. A body class
+  // the game's own stylesheet can outrank is what actually removes it.
+  document.body.classList.toggle('justsign-route', isGame);
 
   updateBanner(hash);
   await route.setup(mainContent);
   currentCleanup = route.cleanup;
-  document.title = isGame ? 'JustSign — Watch. Sign. Shine.' : `${route.label} - MediaPipe Web Task Demo`;
+  document.title = isGame ? 'JustSign — Sign at your pace' : `${route.label} - MediaPipe Web Task Demo`;
 
   // Update active state in sidebar
   const links = sidebar.querySelectorAll('a');
