@@ -59,3 +59,5 @@
 .main-content.justsign-main { overflow-y: auto; margin: 0; padding: 0; width: 100%; max-width: none; }
 .task-stage.justsign-stage { flex: none; overflow: visible; padding: 0; width: 100%; max-width: none; }
 
+
+.js-video-wrap img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }

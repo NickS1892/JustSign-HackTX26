@@ -1,5 +1,9 @@
 /** Tune recognition here after testing several signers and camera distances. */
 export const GAME_CONFIG = {
+  imageRoundMs: 4000,
+  imageTolerance: 0.3,
+  imageHoldMs: 300,
+  imageMaxFrameGapMs: 200,
   sampleFps: 12,
   countdownMs: 3000,
   feedbackMs: 2500,
@@ -13,3 +17,4 @@ export const GAME_CONFIG = {
   alignmentWindow: 0.25,
   maxRoundPoints: 1000,
 } as const;
+

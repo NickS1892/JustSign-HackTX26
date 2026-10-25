@@ -1,6 +1,6 @@
 import './game.css';
 import { GAME_CONFIG as C } from './config';
-import { compareSigns } from './matcher';
+import { compareSigns, compareHandImage } from './matcher';
 import { deleteReference, extractReference, loadReferences, saveReference } from './references';
 import { createSignTracker } from './tracker';
 import type { MatchResult, SignFrame, SignReference, SignTracker } from './types';
@@ -38,13 +38,13 @@ export class JustSignGame {
         <div class="js-intro"><p class="js-eyebrow">YOUR HANDS. YOUR RHYTHM.</p><h1>Make your next move.</h1><p>Watch a sign, follow the timing, and see how closely your movements match.</p></div>
         <div class="js-stats"><div><small>ROUND</small><strong data-round>—</strong></div><div><small>TOTAL POINTS</small><strong data-total>0</strong></div><div><small>SIGNS COMPLETED</small><strong data-completed>0</strong></div><div><small>MATCH</small><strong data-match>—</strong></div></div>
         <div class="js-stage">
-          <article class="js-panel"><div class="js-panel-head"><span>01 / THE DEMONSTRATION</span><strong data-sign>Your sign goes here</strong></div><div class="js-video-wrap"><video data-demo playsinline muted controls preload="auto"></video><div class="js-empty" data-empty>✧<h2>Build your sign playlist</h2><p>Import a short video of each sign to get started.</p></div><div class="js-overlay" data-overlay hidden></div></div></article>
+          <article class="js-panel"><div class="js-panel-head"><span>01 / THE DEMONSTRATION</span><strong data-sign>Your sign goes here</strong></div><div class="js-video-wrap"><img data-reference-image hidden alt="Reference handshape"><video data-demo playsinline muted controls preload="auto"></video><div class="js-empty" data-empty>✧<h2>Build your sign playlist</h2><p>Choose a clear photo of one handshape. No training video needed.</p></div><div class="js-overlay" data-overlay hidden></div></div></article>
           <article class="js-panel"><div class="js-panel-head"><span>02 / YOUR MOVEMENT</span><strong data-tracking>Camera off</strong></div><div class="js-video-wrap js-camera-wrap"><video data-camera autoplay muted playsinline></video><canvas data-landmarks></canvas><div class="js-camera-hint" data-camera-hint>Enable your camera.<br>Keep your face, shoulders and hands in view.</div></div></article>
         </div>
         <div class="js-progress" role="progressbar" aria-label="Round progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div></div></div>
-        <div class="js-feedback"><p role="status" aria-live="polite" data-status>Import one or more reference videos, then enable your camera.</p><strong data-timer></strong></div>
+        <div class="js-feedback"><p role="status" aria-live="polite" data-status>Import a handshape photo, then enable your camera.</p><strong data-timer></strong></div>
         <div class="js-controls"><button data-camera-button>Enable camera</button><button class="js-primary" data-start disabled>Start playlist →</button><button data-stop disabled>Stop game</button><label class="js-mirror"><input data-mirror type="checkbox"> Mirror the demonstration</label></div>
-        <section class="js-library"><div class="js-library-heading"><div><p class="js-eyebrow">YOUR PRACTICE SET</p><h2>Sign playlist</h2></div><label class="js-upload">+ Import sign videos<input data-upload type="file" accept="video/*" multiple></label></div><p class="js-help">Use front-facing MP4 or WebM clips, 0.6–15 seconds each, up to 100 MB. File names become sign names. Videos and coordinates stay in this browser.</p><ol data-playlist></ol><p data-storage></p></section>
+        <section class="js-library"><div class="js-library-heading"><div><p class="js-eyebrow">YOUR PRACTICE SET</p><h2>Sign playlist</h2></div><label class="js-upload">+ Import sign images or videos<input data-upload type="file" accept="image/png,image/jpeg,image/webp,video/*" multiple></label></div><p class="js-help">Use a JPG, PNG or WebP photo showing one complete hand. Static photos cannot represent J or Z motion. Video clips may also be used: 0.6–15 seconds each, up to 100 MB. File names become sign names. Videos and coordinates stay in this browser.</p><ol data-playlist></ol><p data-storage></p></section>
         <section class="js-results" data-results hidden><p class="js-eyebrow">NICE PRACTICE</p><h2>Session complete.</h2><div data-result-list></div></section>
         <footer>Movement similarity is practice feedback, not a certified assessment of ASL accuracy. Use reference signs reviewed by an ASL-fluent signer.</footer>
       </section>`;
@@ -142,8 +142,8 @@ export class JustSignGame {
       li.append(text, button); list.append(li);
     }
     this.el('[data-empty]').hidden = this.refs.length > 0;
-    if (this.refs.length && !this.active) { this.demo.src = this.refs[0].videoUrl; this.el('[data-sign]').textContent = this.refs[0].name; }
-    if (!this.refs.length) { this.demo.removeAttribute('src'); this.demo.load(); this.el('[data-sign]').textContent = 'Your sign goes here'; }
+    if (this.refs.length && !this.active) { this.showReference(this.refs[0]); this.el('[data-sign]').textContent = this.refs[0].name; }
+    if (!this.refs.length) { this.el<HTMLImageElement>('[data-reference-image]').hidden = true; this.demo.removeAttribute('src'); this.demo.load(); this.el('[data-sign]').textContent = 'Your sign goes here'; }
     this.updateControls();
   }
   private async remove(ref: SignReference) {
@@ -161,11 +161,19 @@ export class JustSignGame {
     this.el('[data-total]').textContent = '0'; this.el('[data-completed]').textContent = '0';
     await this.watch();
   }
+  private showReference(ref: SignReference) {
+    const img = this.el<HTMLImageElement>('[data-reference-image]');
+    img.hidden = ref.kind !== 'image'; this.demo.hidden = ref.kind === 'image';
+    if (ref.kind === 'image') { this.demo.pause(); img.src = ref.videoUrl; }
+    else { img.removeAttribute('src'); this.demo.src = ref.videoUrl; }
+  }
   private async watch() {
     const ref = this.refs[this.round];
     this.phase = 'watch'; this.phaseStart = performance.now(); this.updateControls();
     this.el('[data-round]').textContent = `${this.round + 1} / ${this.refs.length}`;
     this.el('[data-sign]').textContent = ref.name; this.el('[data-match]').textContent = '—';
+    this.showReference(ref);
+    if (ref.kind === 'image') { this.beginCountdown(); return; }
     this.demo.src = ref.videoUrl; this.demo.currentTime = 0; this.demo.controls = false; this.demo.playbackRate = 1;
     this.overlay('Watch first'); this.status(`Watch “${ref.name}”. Your turn starts after a 3-second countdown.`);
     try { await this.demo.play(); }
@@ -177,7 +185,8 @@ export class JustSignGame {
   }
   private async perform() {
     this.phase = 'starting'; this.phaseStart = performance.now(); this.lastSample = 0; this.attempt = [];
-    this.overlay(''); this.status('Your turn! Match the movement and timing.');
+    this.overlay(''); this.status('Your turn! Match the reference.');
+    if (this.refs[this.round].kind === 'image') { this.phase = 'perform'; return; }
     try {
       await this.demo.play();
       if (this.phase === 'starting') { this.phase = 'perform'; this.phaseStart = performance.now() - this.demo.currentTime * 1000; }
@@ -185,7 +194,7 @@ export class JustSignGame {
   }
   private finishRound() {
     const ref = this.refs[this.round];
-    const result = compareSigns(ref.frames, this.attempt, ref.durationMs, this.mirror);
+    const result = ref.kind === 'image' ? compareHandImage(ref.frames[0], this.attempt) : compareSigns(ref.frames, this.attempt, ref.durationMs, this.mirror);
     const points = Math.round(result.score / 100 * C.maxRoundPoints);
     this.results.push({ name: ref.name, result, points }); this.phase = 'feedback'; this.phaseStart = performance.now();
     this.demo.pause(); this.el('[data-match]').textContent = `${result.score}%`;
@@ -199,7 +208,7 @@ export class JustSignGame {
     const list = this.el('[data-result-list]'); list.replaceChildren();
     const table = document.createElement('table');
     const head = table.createTHead().insertRow();
-    for (const label of ['Sign', 'Match', 'Movement', 'Timing', 'Result']) { const th = document.createElement('th'); th.textContent = label; th.scope = 'col'; head.append(th); }
+    for (const label of ['Sign', 'Match', 'Shape / movement', 'Hold / timing', 'Result']) { const th = document.createElement('th'); th.textContent = label; th.scope = 'col'; head.append(th); }
     const body = table.createTBody();
     for (const r of this.results) {
       const row = body.insertRow();
@@ -249,9 +258,14 @@ export class JustSignGame {
     if (this.stream?.active && this.tracker && !this.busy && this.camera.readyState >= 2 && now - this.lastSample >= 1000 / C.sampleFps) {
       this.lastSample = now;
       try {
-        const frame = this.tracker.detect(this.camera, this.phase === 'perform' ? now - this.phaseStart : 0);
+        const detect = this.refs[this.round]?.kind === 'image' && this.tracker.detectHands ? this.tracker.detectHands.bind(this.tracker) : this.tracker.detect.bind(this.tracker);
+        const frame = detect(this.camera, this.phase === 'perform' ? now - this.phaseStart : 0);
         this.draw(frame);
-        if (this.phase === 'perform') this.attempt.push(frame);
+        if (this.phase === 'perform') {
+          this.attempt.push(frame);
+          const ref = this.refs[this.round];
+          if (ref.kind === 'image') this.el('[data-match]').textContent = `${compareHandImage(ref.frames[0], [frame]).score}%`;
+        }
       } catch { this.cancel('Tracking stopped. Enable your camera again to retry.'); this.stream.getTracks().forEach(t => t.stop()); this.stream = undefined; this.updateControls(); }
     }
     this.raf = requestAnimationFrame(this.tick);
@@ -269,3 +283,4 @@ export class JustSignGame {
 let active: JustSignGame | undefined;
 export function setupJustSign(container: HTMLElement) { active = new JustSignGame(container); }
 export function cleanupJustSign() { active?.dispose(); active = undefined; }
+
