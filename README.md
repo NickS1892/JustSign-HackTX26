@@ -1,3 +1,7 @@
+# JustSign
+
+The app now opens the JustSign sign-matching game. Import reference videos, enable your camera, and play a playlist of demonstration and performance rounds. See [JUSTSIGN.md](JUSTSIGN.md) for setup, matcher integration and validation details. The original MediaPipe demos remain at `#/home`.
+
 # MediaPipe Tasks Demo
 
 Experience the power of on-device Machine Learning with MediaPipe Tasks. This

@@ -10,6 +10,7 @@ export function setupCoverPage(container: HTMLElement) {
       </div>
 
       <div class="cover-content">
+      <a href="#/game/justsign" class="cover-card"><div class="card-content"><h3>✦ Play JustSign</h3><p>Import signs and practice with movement matching.</p></div></a>
         <div class="cover-row-3">
           <!-- Audio -->
           <div class="cover-category domain-audio">

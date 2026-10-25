@@ -15,6 +15,7 @@
  */
 
 import './app_clean.css';
+import { setupJustSign, cleanupJustSign } from './game/game';
 import { setupObjectDetector, cleanupObjectDetector } from './tasks/object-detector';
 import { setupImageSegmenter, cleanupImageSegmenter } from './tasks/image-segmenter';
 import { setupAudioClassifier, cleanupAudioClassifier } from './tasks/audio-classifier';
@@ -106,6 +107,7 @@ const mainContent = app.querySelector('#task-stage') as HTMLElement;
 
 // 4. Router Setup
 const routes = {
+  '/game/justsign': { setup: setupJustSign, cleanup: cleanupJustSign, label: 'JustSign' },
   '/home': { setup: setupCoverPage, cleanup: cleanupCoverPage, label: 'Home' },
   '/vision/object_detector': {
     setup: setupObjectDetector,
@@ -182,10 +184,10 @@ let currentCleanup: (() => void) | undefined;
 async function applyRoute() {
   const hash = window.location.hash.slice(1);
 
-  // Handle root or invalid routes by defaulting to home. Changing
+  // Handle root or invalid routes by defaulting to JustSign. Changing
   // the hash fires `hashchange`, which routes again with the valid hash.
   if (!hash || !routes[hash as keyof typeof routes]) {
-    window.location.hash = '/home';
+    window.location.hash = '/game/justsign';
     return;
   }
 
@@ -201,7 +203,11 @@ async function applyRoute() {
   mainContent.innerHTML = '';
 
   // Setup new task
-  const isHome = hash === '/home';
+  const isGame = hash === '/game/justsign';
+  const isHome = hash === '/home' || isGame;
+  bannerContainer.style.display = isGame ? 'none' : '';
+  mainContent.classList.toggle('justsign-stage', isGame);
+  app.querySelector('.main-content')?.classList.toggle('justsign-main', isGame);
   sidebar.style.display = isHome ? 'none' : '';
   const mobileHeader = app.querySelector('.mobile-header') as HTMLElement;
   if (mobileHeader) mobileHeader.style.display = isHome ? 'none' : '';
@@ -209,7 +215,7 @@ async function applyRoute() {
   updateBanner(hash);
   await route.setup(mainContent);
   currentCleanup = route.cleanup;
-  document.title = `${route.label} - MediaPipe Web Task Demo`;
+  document.title = isGame ? 'JustSign — Watch. Sign. Shine.' : `${route.label} - MediaPipe Web Task Demo`;
 
   // Update active state in sidebar
   const links = sidebar.querySelectorAll('a');
