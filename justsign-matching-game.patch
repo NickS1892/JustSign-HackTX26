@@ -1,0 +1,828 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,7 @@
++# JustSign
++
++The app now opens the JustSign sign-matching game. Import reference videos, enable your camera, and play a playlist of demonstration and performance rounds. See [JUSTSIGN.md](JUSTSIGN.md) for setup, matcher integration and validation details. The original MediaPipe demos remain at `#/home`.
++
+ # MediaPipe Tasks Demo
+ 
+ Experience the power of on-device Machine Learning with MediaPipe Tasks. This
+diff --git a/JUSTSIGN.md b/JUSTSIGN.md
+new file mode 100644
+--- /dev/null
++++ b/JUSTSIGN.md
+@@ -0,0 +1,46 @@
++# JustSign: matching and game interface
++
++Open the app to enter JustSign, or use `#/game/justsign`. Existing MediaPipe demos remain at `#/home`.
++
++1. Run the repository's existing install and dev commands (`pnpm install`, `pnpm dev`). Use HTTPS or localhost for camera access. Vite currently serves at `http://localhost:5174/mediapipe-samples-web/`.
++2. Import front-facing MP4/WebM reference clips, each 0.6–15 seconds and under 100 MB. Include the signer's face, shoulders, elbows and signing hands. Name the files after the signs. Use reviewed demonstrations: this repository does not ship an ASL video dataset.
++3. Wait for coordinate extraction, enable the camera, and start the playlist. The initial MediaPipe model download requires network access.
++4. Each round plays the demonstration, counts down for three seconds, then replays the video while capturing the player's attempt. Feedback and points appear before the next round. Results report overall match, movement, timing and completion per sign. Start again to replay.
++5. Use **Mirror the demonstration** if you want to copy its mirrored hand. The matcher explicitly reflects and swaps the player's anatomical hand channels in this mode.
++
++Imported video blobs and raw landmark sequences persist in this browser's IndexedDB. No webcam video is uploaded or recorded. Clear individual references with Remove. Storage failures leave imports usable for the current session. Different devices maintain separate playlists; this is a single-player game, with no multiplayer networking.
++
++## Integration with Person 1
++
++`src/game/types.ts` defines `SignTracker.detect(video, timestampMs): SignFrame` and `close()`. The included `createSignTracker` uses the existing MediaPipe Tasks Vision dependency with HolisticLandmarker, local WASM, cached model downloads and GPU-to-CPU fallback. To use another tracking implementation, replace this adapter or inject a factory into `new JustSignGame(container, factory)`.
++
++Frames use unmirrored image coordinates and anatomical left/right hands, with 33 pose landmarks and 21 landmarks per detected hand. Missing hands are empty arrays. Reference timestamps and attempt timestamps start at zero for their respective clip/round, in milliseconds. Mirroring the camera preview is visual only.
++
++## Matching
++
++`compareSigns(referenceFrames, attemptFrames, durationMs, mirror)` returns:
++
++```ts
++{ score, completed, movementScore, timingScore, coverage, feedback }
++```
++
++Scores are 0–100. Shoulder-centered, shoulder-width-scaled body coordinates retain hand placement; palm-scaled, wrist-relative coordinates retain finger shape and orientation. The matcher uses image x/y because hand and body depth values have different origins. Bounded dynamic time warping measures movement similarity, and unwarped comparison penalizes timing differences. Missing or invalid tracking remains a gap rather than becoming a matching pose. A stationary pose cannot pass the tested moving-sign fixture. Defaults require at least 70% tracking coverage and a 72% match score for completion; points are match score × 10, including partial credit for incomplete attempts.
++
++All thresholds, time limits, sampling rate and points live in `src/game/config.ts`. Detection and extraction target 12 FPS. If the device cannot sustain tracking, it may reject attempts for insufficient coverage. Inference uses the main thread in this first implementation; the tracker contract can be moved to an asynchronous worker in a later performance pass.
++
++This compares an attempt to the expected reference; it is not a trained sign classifier. It does not validate language meaning, facial expression or full 3D palm orientation. Thresholds need calibration with real signers and ASL-fluent review before claiming recognition accuracy.
++
++## Validation
++
++Run `node --test tests/sign-matcher.test.mjs` with Node 24+. These tests require no downloads, camera or model. They cover exact matches, body translation/scale, stationary and reversed movement, timing shifts, sparse/lost tracking, explicit mirroring and invalid data. `pnpm build` remains the full TypeScript and Vite check; existing Playwright tests cover the original demo suite.
++
++Manual browser checks:
++
++- Import one- and two-handed signs; try the right movement, a different sign and no visible hands.
++- Verify watch → countdown → perform → feedback → next round → results, then replay.
++- Stop mid-round, switch tabs, navigate to demos, and disconnect the camera. Interrupted rounds must not add points; route cleanup must release the camera.
++- Refresh to verify saved clips restore; remove a clip and refresh again.
++- Deny camera permission or disconnect the network during model loading; retry after correcting the issue.
++- Test a narrow phone viewport and a laptop. On a second device served over HTTPS, import the same clips and repeat; no synchronization is intended.
++
++In the implementation environment, all nine matcher tests and parsing of the new TypeScript modules passed. A full build and browser execution could not run: the environment returned HTTP 403 for npm package downloads and Chromium downloads. Live-camera accuracy and rendered layouts still need browser verification.
+diff --git a/src/main.ts b/src/main.ts
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -15,6 +15,7 @@
+  */
+ 
+ import './app_clean.css';
++import { setupJustSign, cleanupJustSign } from './game/game';
+ import { setupObjectDetector, cleanupObjectDetector } from './tasks/object-detector';
+ import { setupImageSegmenter, cleanupImageSegmenter } from './tasks/image-segmenter';
+ import { setupAudioClassifier, cleanupAudioClassifier } from './tasks/audio-classifier';
+@@ -106,6 +107,7 @@
+ 
+ // 4. Router Setup
+ const routes = {
++  '/game/justsign': { setup: setupJustSign, cleanup: cleanupJustSign, label: 'JustSign' },
+   '/home': { setup: setupCoverPage, cleanup: cleanupCoverPage, label: 'Home' },
+   '/vision/object_detector': {
+     setup: setupObjectDetector,
+@@ -182,10 +184,10 @@
+ async function applyRoute() {
+   const hash = window.location.hash.slice(1);
+ 
+-  // Handle root or invalid routes by defaulting to home. Changing
++  // Handle root or invalid routes by defaulting to JustSign. Changing
+   // the hash fires `hashchange`, which routes again with the valid hash.
+   if (!hash || !routes[hash as keyof typeof routes]) {
+-    window.location.hash = '/home';
++    window.location.hash = '/game/justsign';
+     return;
+   }
+ 
+@@ -201,7 +203,11 @@
+   mainContent.innerHTML = '';
+ 
+   // Setup new task
+-  const isHome = hash === '/home';
++  const isGame = hash === '/game/justsign';
++  const isHome = hash === '/home' || isGame;
++  bannerContainer.style.display = isGame ? 'none' : '';
++  mainContent.classList.toggle('justsign-stage', isGame);
++  app.querySelector('.main-content')?.classList.toggle('justsign-main', isGame);
+   sidebar.style.display = isHome ? 'none' : '';
+   const mobileHeader = app.querySelector('.mobile-header') as HTMLElement;
+   if (mobileHeader) mobileHeader.style.display = isHome ? 'none' : '';
+@@ -209,7 +215,7 @@
+   updateBanner(hash);
+   await route.setup(mainContent);
+   currentCleanup = route.cleanup;
+-  document.title = `${route.label} - MediaPipe Web Task Demo`;
++  document.title = isGame ? 'JustSign — Watch. Sign. Shine.' : `${route.label} - MediaPipe Web Task Demo`;
+ 
+   // Update active state in sidebar
+   const links = sidebar.querySelectorAll('a');
+diff --git a/src/ui/cover-page.ts b/src/ui/cover-page.ts
+--- a/src/ui/cover-page.ts
++++ b/src/ui/cover-page.ts
+@@ -10,6 +10,7 @@
+       </div>
+ 
+       <div class="cover-content">
++      <a href="#/game/justsign" class="cover-card"><div class="card-content"><h3>✦ Play JustSign</h3><p>Import signs and practice with movement matching.</p></div></a>
+         <div class="cover-row-3">
+           <!-- Audio -->
+           <div class="cover-category domain-audio">
+diff --git a/src/vite-env.d.ts b/src/vite-env.d.ts
+--- a/src/vite-env.d.ts
++++ b/src/vite-env.d.ts
+@@ -1,4 +1,3 @@
+-```typescript
+ /// <reference types="vite/client" />
+ 
+ declare module '*.html' {
+@@ -10,4 +9,3 @@
+   const content: string;
+   export default content;
+ }
+-```;
+diff --git a/tests/sign-matcher.test.mjs b/tests/sign-matcher.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/tests/sign-matcher.test.mjs
+@@ -0,0 +1,73 @@
++// Run with Node 24+: node --test tests/sign-matcher.test.mjs (no model or camera required).
++import { test, after } from 'node:test';
++import assert from 'node:assert/strict';
++import { stripTypeScriptTypes } from 'node:module';
++import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { pathToFileURL } from 'node:url';
++
++const dir = await mkdtemp(join(tmpdir(), 'justsign-test-'));
++for (const file of ['config', 'matcher']) {
++  const source = await readFile(new URL(`../src/game/${file}.ts`, import.meta.url), 'utf8');
++  await writeFile(join(dir, `${file}.mjs`), stripTypeScriptTypes(source).replace("'./config'", "'./config.mjs'"));
++}
++const { compareSigns, normalizeFrame, mirrorFrame } = await import(pathToFileURL(join(dir, 'matcher.mjs')));
++after(() => rm(dir, { recursive: true, force: true }));
++
++function frame(t, motion = true) {
++  const pose = Array.from({ length: 33 }, () => ({ x: .5, y: .4, z: 0, visibility: 1 }));
++  pose[11] = { x: .3, y: .4, z: 0 }; pose[12] = { x: .7, y: .4, z: 0 };
++  pose[13] = { x: .25, y: .6, z: 0 }; pose[14] = { x: .75, y: .6, z: 0 };
++  const offset = motion ? .4 * Math.sin(t / 2000 * Math.PI * 2) : 0;
++  const hand = Array.from({ length: 21 }, (_, i) => ({ x: .45 + offset + (i % 4) * .015, y: .6 - Math.floor(i / 4) * .025, z: 0 }));
++  return { timestampMs: t, pose, leftHand: hand, rightHand: [] };
++}
++const sequence = (fn = t => frame(t)) => Array.from({ length: 24 }, (_, i) => fn(i * 1000 / 12));
++const ref = sequence();
++
++test('identical movement completes with full score', () => {
++  const r = compareSigns(ref, ref, 2000);
++  assert.equal(r.score, 100); assert.equal(r.completed, true);
++});
++test('translation and uniform scale do not affect matching', () => {
++  const transform = p => ({ ...p, x: p.x * .7 + .12, y: p.y * .7 + .08 });
++  const moved = ref.map(f => ({ ...f, pose: f.pose.map(transform), leftHand: f.leftHand.map(transform) }));
++  assert.equal(compareSigns(ref, moved, 2000).score, 100);
++});
++test('holding one pose cannot complete a moving sign', () => {
++  const r = compareSigns(ref, sequence(t => frame(t, false)), 2000);
++  assert.equal(r.completed, false); assert.ok(r.score < 72);
++});
++test('missing hands and missing shoulders cannot earn points', () => {
++  assert.equal(compareSigns(ref, ref.map(f => ({ ...f, leftHand: [] })), 2000).completed, false);
++  assert.equal(compareSigns(ref, ref.map(f => ({ ...f, pose: [] })), 2000).score, 0);
++  assert.equal(normalizeFrame({ ...ref[0], pose: [] }), null);
++});
++test('sparse frames cannot fill a full attempt or hide dropped tracking', () => {
++  const sparse = ref.filter((_, i) => i % 3 === 0);
++  assert.equal(compareSigns(ref, sparse, 2000).completed, false);
++  assert.equal(compareSigns(ref, ref.slice(0, 10), 2000).completed, false);
++  assert.equal(compareSigns(ref, [], 2000).score, 0);
++});
++test('timing is penalized even with similar movement', () => {
++  const delayed = sequence(t => ({ ...frame(Math.max(0, t - 400)), timestampMs: t }));
++  const r = compareSigns(ref, delayed, 2000);
++  assert.ok(r.timingScore < 90); assert.ok(r.score < 100);
++});
++test('reversing movement is not accepted as the expected sign', () => {
++  const reverse = ref.toReversed().map((f, i) => ({ ...f, timestampMs: i * 1000 / 12 }));
++  assert.equal(compareSigns(ref, reverse, 2000).completed, false);
++});
++test('mirror mode is explicit and swaps anatomical hands', () => {
++  const mirrored = ref.map(mirrorFrame);
++  assert.equal(compareSigns(ref, mirrored, 2000).completed, false);
++  assert.equal(compareSigns(ref, mirrored, 2000, true).score, 100);
++});
++test('invalid data and invalid reference timing do not pass', () => {
++  assert.equal(compareSigns(ref, ref, NaN).score, 0);
++  assert.equal(compareSigns(ref, ref, Infinity).completed, false);
++  const bad = ref.map(f => ({ ...f, leftHand: f.leftHand.map(p => ({ ...p, x: NaN })) }));
++  assert.equal(compareSigns(ref, bad, 2000).completed, false);
++  assert.equal(compareSigns(bad, ref, 2000).completed, false);
++});
+diff --git a/src/game/game.ts b/src/game/game.ts
+new file mode 100644
+--- /dev/null
++++ b/src/game/game.ts
+@@ -0,0 +1,271 @@
++import './game.css';
++import { GAME_CONFIG as C } from './config';
++import { compareSigns } from './matcher';
++import { deleteReference, extractReference, loadReferences, saveReference } from './references';
++import { createSignTracker } from './tracker';
++import type { MatchResult, SignFrame, SignReference, SignTracker } from './types';
++
++type Phase = 'setup' | 'watch' | 'countdown' | 'starting' | 'perform' | 'feedback' | 'results';
++interface RoundResult { name: string; result: MatchResult; points: number }
++
++export class JustSignGame {
++  private refs: SignReference[] = [];
++  private tracker?: SignTracker;
++  private trackerPromise?: Promise<SignTracker>;
++  private stream?: MediaStream;
++  private abort = new AbortController();
++  private phase: Phase = 'setup';
++  private busy = false;
++  private cameraPending = false;
++  private disposed = false;
++  private raf = 0;
++  private lastSample = 0;
++  private phaseStart = 0;
++  private round = 0;
++  private attempt: SignFrame[] = [];
++  private results: RoundResult[] = [];
++  private camera: HTMLVideoElement;
++  private demo: HTMLVideoElement;
++  private canvas: HTMLCanvasElement;
++  private onVisibility = () => {
++    if (document.hidden && this.phase !== 'setup' && this.phase !== 'results') this.cancel('Round stopped while the tab was hidden. Start again when ready.');
++  };
++
++  constructor(private root: HTMLElement, private trackerFactory = createSignTracker) {
++    root.innerHTML = `
++      <section class="justsign">
++        <header class="js-header"><a class="js-brand" href="#/game/justsign">✦ JustSign</a><span>WATCH. SIGN. SHINE.</span><a href="#/home">MediaPipe demos ↗</a></header>
++        <div class="js-intro"><p class="js-eyebrow">YOUR HANDS. YOUR RHYTHM.</p><h1>Make your next move.</h1><p>Watch a sign, follow the timing, and see how closely your movements match.</p></div>
++        <div class="js-stats"><div><small>ROUND</small><strong data-round>—</strong></div><div><small>TOTAL POINTS</small><strong data-total>0</strong></div><div><small>SIGNS COMPLETED</small><strong data-completed>0</strong></div><div><small>MATCH</small><strong data-match>—</strong></div></div>
++        <div class="js-stage">
++          <article class="js-panel"><div class="js-panel-head"><span>01 / THE DEMONSTRATION</span><strong data-sign>Your sign goes here</strong></div><div class="js-video-wrap"><video data-demo playsinline muted controls preload="auto"></video><div class="js-empty" data-empty>✧<h2>Build your sign playlist</h2><p>Import a short video of each sign to get started.</p></div><div class="js-overlay" data-overlay hidden></div></div></article>
++          <article class="js-panel"><div class="js-panel-head"><span>02 / YOUR MOVEMENT</span><strong data-tracking>Camera off</strong></div><div class="js-video-wrap js-camera-wrap"><video data-camera autoplay muted playsinline></video><canvas data-landmarks></canvas><div class="js-camera-hint" data-camera-hint>Enable your camera.<br>Keep your face, shoulders and hands in view.</div></div></article>
++        </div>
++        <div class="js-progress" role="progressbar" aria-label="Round progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div></div></div>
++        <div class="js-feedback"><p role="status" aria-live="polite" data-status>Import one or more reference videos, then enable your camera.</p><strong data-timer></strong></div>
++        <div class="js-controls"><button data-camera-button>Enable camera</button><button class="js-primary" data-start disabled>Start playlist →</button><button data-stop disabled>Stop game</button><label class="js-mirror"><input data-mirror type="checkbox"> Mirror the demonstration</label></div>
++        <section class="js-library"><div class="js-library-heading"><div><p class="js-eyebrow">YOUR PRACTICE SET</p><h2>Sign playlist</h2></div><label class="js-upload">+ Import sign videos<input data-upload type="file" accept="video/*" multiple></label></div><p class="js-help">Use front-facing MP4 or WebM clips, 0.6–15 seconds each, up to 100 MB. File names become sign names. Videos and coordinates stay in this browser.</p><ol data-playlist></ol><p data-storage></p></section>
++        <section class="js-results" data-results hidden><p class="js-eyebrow">NICE PRACTICE</p><h2>Session complete.</h2><div data-result-list></div></section>
++        <footer>Movement similarity is practice feedback, not a certified assessment of ASL accuracy. Use reference signs reviewed by an ASL-fluent signer.</footer>
++      </section>`;
++    this.camera = this.el('[data-camera]'); this.demo = this.el('[data-demo]'); this.canvas = this.el('[data-landmarks]');
++    this.el<HTMLButtonElement>('[data-camera-button]').onclick = () => void this.enableCamera();
++    this.el<HTMLButtonElement>('[data-start]').onclick = () => void this.start();
++    this.el<HTMLButtonElement>('[data-stop]').onclick = () => this.cancel('Game stopped. Your playlist is ready for another try.');
++    this.el<HTMLInputElement>('[data-upload]').onchange = e => void this.importVideos(e.target as HTMLInputElement);
++    this.el<HTMLInputElement>('[data-mirror]').onchange = () => this.demo.classList.toggle('js-mirrored', this.mirror);
++    this.demo.onended = () => { if (this.phase === 'watch') this.beginCountdown(); };
++    this.demo.onerror = () => { if (this.phase !== 'setup' && this.phase !== 'results') this.cancel('The demonstration could not play. Remove it and import a supported video.'); };
++    document.addEventListener('visibilitychange', this.onVisibility);
++    void this.restore();
++    this.raf = requestAnimationFrame(this.tick);
++  }
++
++  private el<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
++  private get mirror() { return this.el<HTMLInputElement>('[data-mirror]').checked; }
++  private status(message: string) { if (!this.disposed) this.el('[data-status]').textContent = message; }
++  private get active() { return this.phase !== 'setup' && this.phase !== 'results'; }
++  private updateControls() {
++    if (this.disposed) return;
++    this.el<HTMLButtonElement>('[data-start]').disabled = this.active || this.busy || this.cameraPending || !this.stream?.active || !this.refs.length;
++    this.el<HTMLButtonElement>('[data-camera-button]').disabled = this.active || this.busy || this.cameraPending || !!this.stream?.active;
++    this.el<HTMLButtonElement>('[data-stop]').disabled = !this.active;
++    this.el<HTMLInputElement>('[data-upload]').disabled = this.active || this.busy || this.cameraPending;
++    this.el<HTMLInputElement>('[data-mirror]').disabled = this.active;
++    this.root.querySelectorAll<HTMLButtonElement>('[data-remove]').forEach(b => b.disabled = this.active || this.busy);
++  }
++  private async restore() {
++    this.busy = true; this.updateControls();
++    try {
++      const refs = await loadReferences();
++      if (this.disposed) { refs.forEach(r => URL.revokeObjectURL(r.videoUrl)); return; }
++      this.refs = refs; this.renderPlaylist();
++    } catch { if (!this.disposed) this.el('[data-storage]').textContent = 'Browser storage is unavailable. Imported signs will work for this session.'; }
++    finally { this.busy = false; this.updateControls(); }
++  }
++  private async getTracker(): Promise<SignTracker> {
++    if (!this.trackerPromise) {
++      this.status('Loading hand and body tracking. The first download can take a moment…');
++      this.trackerPromise = this.trackerFactory().then(tracker => {
++        if (this.disposed) { tracker.close(); throw new Error('Game closed.'); }
++        this.tracker = tracker; return tracker;
++      }).catch(error => { this.trackerPromise = undefined; throw error; });
++    }
++    return this.trackerPromise;
++  }
++  private async enableCamera() {
++    this.cameraPending = true; this.updateControls();
++    try {
++      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access needs HTTPS or localhost.');
++      await this.getTracker();
++      if (this.disposed) return;
++      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' }, audio: false });
++      if (this.disposed) { stream.getTracks().forEach(t => t.stop()); return; }
++      this.stream = stream; this.camera.srcObject = stream;
++      stream.getVideoTracks()[0].onended = () => { this.stream = undefined; this.cancel('Camera disconnected. Enable it again to continue.'); };
++      await this.camera.play();
++      if (this.disposed) return;
++      this.el('[data-camera-hint]').hidden = true;
++      this.status('Camera ready. Import your signs or start your playlist.');
++    } catch (error) {
++      this.stream?.getTracks().forEach(t => t.stop()); this.stream = undefined;
++      this.status(`Camera could not start: ${error instanceof Error ? error.message : 'check camera permissions and try again.'}`);
++    } finally { this.cameraPending = false; this.updateControls(); }
++  }
++  private async importVideos(input: HTMLInputElement) {
++    const files = Array.from(input.files ?? []); if (!files.length) return;
++    this.busy = true; this.updateControls();
++    let added = 0; const errors: string[] = [];
++    try {
++      const tracker = await this.getTracker();
++      for (const file of files) {
++        if (this.disposed) break;
++        try {
++          const ref = await extractReference(file, tracker, this.abort.signal, fraction => this.status(`Extracting ${file.name}: ${Math.round(fraction * 100)}%`));
++          if (this.disposed) { URL.revokeObjectURL(ref.videoUrl); break; }
++          this.refs.push(ref); added++; this.renderPlaylist();
++          try { await saveReference(ref, file); }
++          catch { if (!this.disposed) this.el('[data-storage]').textContent = 'Could not save videos to browser storage. Keep this tab open to retain this session.'; }
++        } catch (error) { errors.push(`${file.name}: ${error instanceof Error ? error.message : 'Import failed.'}`); }
++      }
++      this.status(`${added} sign${added === 1 ? '' : 's'} imported.${errors.length ? ` ${errors.join(' ')}` : ' Ready to practice!'}`);
++    } catch (error) { this.status(`Tracking could not load: ${error instanceof Error ? error.message : 'Please retry.'}`); }
++    finally { this.busy = false; input.value = ''; this.updateControls(); }
++  }
++  private renderPlaylist() {
++    const list = this.el('[data-playlist]'); list.replaceChildren();
++    for (const ref of this.refs) {
++      const li = document.createElement('li');
++      const text = document.createElement('span'); text.textContent = `${ref.name} · ${(ref.durationMs / 1000).toFixed(1)}s · ${ref.frames.length} frames`;
++      const button = document.createElement('button'); button.textContent = 'Remove'; button.dataset.remove = ref.id; button.setAttribute('aria-label', `Remove ${ref.name}`);
++      button.onclick = () => void this.remove(ref);
++      li.append(text, button); list.append(li);
++    }
++    this.el('[data-empty]').hidden = this.refs.length > 0;
++    if (this.refs.length && !this.active) { this.demo.src = this.refs[0].videoUrl; this.el('[data-sign]').textContent = this.refs[0].name; }
++    if (!this.refs.length) { this.demo.removeAttribute('src'); this.demo.load(); this.el('[data-sign]').textContent = 'Your sign goes here'; }
++    this.updateControls();
++  }
++  private async remove(ref: SignReference) {
++    if (this.active || this.busy) return;
++    this.busy = true; this.updateControls();
++    try { await deleteReference(ref.id); }
++    catch { this.status('Could not update browser storage. The sign may return after a refresh.'); }
++    if (this.disposed) return;
++    this.refs = this.refs.filter(r => r.id !== ref.id); URL.revokeObjectURL(ref.videoUrl);
++    this.busy = false; this.renderPlaylist();
++  }
++  private async start() {
++    if (this.active || this.busy || !this.refs.length || !this.stream?.active) return;
++    this.round = 0; this.results = []; this.el('[data-results]').hidden = true;
++    this.el('[data-total]').textContent = '0'; this.el('[data-completed]').textContent = '0';
++    await this.watch();
++  }
++  private async watch() {
++    const ref = this.refs[this.round];
++    this.phase = 'watch'; this.phaseStart = performance.now(); this.updateControls();
++    this.el('[data-round]').textContent = `${this.round + 1} / ${this.refs.length}`;
++    this.el('[data-sign]').textContent = ref.name; this.el('[data-match]').textContent = '—';
++    this.demo.src = ref.videoUrl; this.demo.currentTime = 0; this.demo.controls = false; this.demo.playbackRate = 1;
++    this.overlay('Watch first'); this.status(`Watch “${ref.name}”. Your turn starts after a 3-second countdown.`);
++    try { await this.demo.play(); }
++    catch { if (this.phase === 'watch') this.cancel('Could not play the demonstration. Press Start playlist to retry.'); }
++  }
++  private beginCountdown() {
++    this.phase = 'countdown'; this.phaseStart = performance.now(); this.demo.pause(); this.demo.currentTime = 0;
++    this.status('Get ready. Repeat the sign with the demonstration.');
++  }
++  private async perform() {
++    this.phase = 'starting'; this.phaseStart = performance.now(); this.lastSample = 0; this.attempt = [];
++    this.overlay(''); this.status('Your turn! Match the movement and timing.');
++    try {
++      await this.demo.play();
++      if (this.phase === 'starting') { this.phase = 'perform'; this.phaseStart = performance.now() - this.demo.currentTime * 1000; }
++    } catch { if (this.phase === 'starting') this.cancel('Demonstration playback stopped. Start again when ready.'); }
++  }
++  private finishRound() {
++    const ref = this.refs[this.round];
++    const result = compareSigns(ref.frames, this.attempt, ref.durationMs, this.mirror);
++    const points = Math.round(result.score / 100 * C.maxRoundPoints);
++    this.results.push({ name: ref.name, result, points }); this.phase = 'feedback'; this.phaseStart = performance.now();
++    this.demo.pause(); this.el('[data-match]').textContent = `${result.score}%`;
++    this.el('[data-total]').textContent = String(this.results.reduce((sum, r) => sum + r.points, 0));
++    this.el('[data-completed]').textContent = String(this.results.filter(r => r.result.completed).length);
++    this.overlay(result.completed ? 'Sign completed ✦' : 'Keep practicing'); this.status(`${result.feedback} +${points} points.`);
++  }
++  private showResults() {
++    this.phase = 'results'; this.overlay('Session complete'); this.demo.controls = true;
++    this.el('[data-results]').hidden = false;
++    const list = this.el('[data-result-list]'); list.replaceChildren();
++    const table = document.createElement('table');
++    const head = table.createTHead().insertRow();
++    for (const label of ['Sign', 'Match', 'Movement', 'Timing', 'Result']) { const th = document.createElement('th'); th.textContent = label; th.scope = 'col'; head.append(th); }
++    const body = table.createTBody();
++    for (const r of this.results) {
++      const row = body.insertRow();
++      for (const value of [r.name, `${r.result.score}%`, `${r.result.movementScore}%`, `${r.result.timingScore}%`, r.result.completed ? 'Completed' : 'Practice again']) row.insertCell().textContent = value;
++    }
++    list.append(table); this.status('Session complete. Review your signs below, or play again.'); this.updateControls();
++  }
++  private cancel(message: string) {
++    this.phase = 'setup'; this.demo.pause(); this.demo.controls = true; this.overlay('');
++    this.el('[data-timer]').textContent = ''; this.progress(0); this.status(message); this.updateControls();
++  }
++  private overlay(text: string) { this.el('[data-overlay]').textContent = text; this.el('[data-overlay]').hidden = !text; }
++  private progress(fraction: number) {
++    const bar = this.el('.js-progress'); bar.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
++    this.el('.js-progress > div').style.width = `${fraction * 100}%`;
++  }
++  private draw(frame: SignFrame) {
++    this.canvas.width = this.camera.videoWidth; this.canvas.height = this.camera.videoHeight;
++    const ctx = this.canvas.getContext('2d'); if (!ctx) return;
++    const connections = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [5, 9, 10, 11, 12], [9, 13, 14, 15, 16], [13, 17, 18, 19, 20], [0, 17]];
++    for (const hand of [frame.leftHand, frame.rightHand]) {
++      ctx.strokeStyle = '#b9fa6d'; ctx.lineWidth = 3;
++      for (const chain of connections) {
++        ctx.beginPath(); chain.forEach((index, i) => { const p = hand[index]; if (p) { if (i === 0) ctx.moveTo(p.x * this.canvas.width, p.y * this.canvas.height); else ctx.lineTo(p.x * this.canvas.width, p.y * this.canvas.height); } }); ctx.stroke();
++      }
++    }
++    this.el('[data-tracking]').textContent = frame.leftHand.length || frame.rightHand.length ? 'Hands detected ●' : 'Show your hands';
++  }
++  private tick = (now: number) => {
++    if (this.disposed) return;
++    const elapsed = now - this.phaseStart;
++    if ((this.phase === 'starting' || this.phase === 'watch') && elapsed > 30000) this.cancel('Demonstration loading timed out. Start again to retry.');
++    if (this.phase === 'countdown') {
++      this.overlay(String(Math.max(1, Math.ceil((C.countdownMs - elapsed) / 1000)))); this.progress(elapsed / C.countdownMs);
++      if (elapsed >= C.countdownMs) void this.perform();
++    }
++    if (this.phase === 'perform') {
++      const duration = this.refs[this.round].durationMs;
++      this.progress(Math.min(1, (now - this.phaseStart) / duration));
++      this.el('[data-timer]').textContent = `${Math.max(0, (duration - (now - this.phaseStart)) / 1000).toFixed(1)}s`;
++      if (now - this.phaseStart >= duration) { this.finishRound(); this.el('[data-timer]').textContent = ''; }
++    }
++    if (this.phase === 'feedback' && now - this.phaseStart >= C.feedbackMs) {
++      this.round++;
++      if (this.round < this.refs.length) void this.watch(); else this.showResults();
++    }
++    if (this.stream?.active && this.tracker && !this.busy && this.camera.readyState >= 2 && now - this.lastSample >= 1000 / C.sampleFps) {
++      this.lastSample = now;
++      try {
++        const frame = this.tracker.detect(this.camera, this.phase === 'perform' ? now - this.phaseStart : 0);
++        this.draw(frame);
++        if (this.phase === 'perform') this.attempt.push(frame);
++      } catch { this.cancel('Tracking stopped. Enable your camera again to retry.'); this.stream.getTracks().forEach(t => t.stop()); this.stream = undefined; this.updateControls(); }
++    }
++    this.raf = requestAnimationFrame(this.tick);
++  };
++  dispose() {
++    if (this.disposed) return;
++    this.disposed = true; this.abort.abort(); cancelAnimationFrame(this.raf);
++    document.removeEventListener('visibilitychange', this.onVisibility);
++    this.demo.pause(); this.demo.removeAttribute('src'); this.demo.load();
++    this.stream?.getTracks().forEach(t => { t.onended = null; t.stop(); }); this.camera.srcObject = null;
++    this.tracker?.close(); this.refs.forEach(r => URL.revokeObjectURL(r.videoUrl));
++  }
++}
++
++let active: JustSignGame | undefined;
++export function setupJustSign(container: HTMLElement) { active = new JustSignGame(container); }
++export function cleanupJustSign() { active?.dispose(); active = undefined; }
+diff --git a/src/game/types.ts b/src/game/types.ts
+new file mode 100644
+--- /dev/null
++++ b/src/game/types.ts
+@@ -0,0 +1,28 @@
++export interface Landmark { x: number; y: number; z: number; visibility?: number }
++/** Anatomical left/right, in unmirrored image coordinates; timestamp in milliseconds. */
++export interface SignFrame {
++  timestampMs: number;
++  pose: Landmark[];
++  leftHand: Landmark[];
++  rightHand: Landmark[];
++}
++export interface SignReference {
++  id: string;
++  name: string;
++  videoUrl: string;
++  durationMs: number;
++  frames: SignFrame[];
++}
++export interface MatchResult {
++  score: number;
++  completed: boolean;
++  movementScore: number;
++  timingScore: number;
++  coverage: number;
++  feedback: string;
++}
++/** A small adapter contract for Person 1's camera / landmark implementation. */
++export interface SignTracker {
++  detect(source: HTMLVideoElement, timestampMs: number): SignFrame;
++  close(): void;
++}
+diff --git a/src/game/tracker.ts b/src/game/tracker.ts
+new file mode 100644
+--- /dev/null
++++ b/src/game/tracker.ts
+@@ -0,0 +1,26 @@
++import { FilesetResolver, HolisticLandmarker } from '@mediapipe/tasks-vision';
++import { fetchModelBytes } from '../components/model-cache';
++import type { SignTracker } from './types';
++
++/** Person 1 may replace this adapter without changing extraction, matching or UI. */
++export async function createSignTracker(): Promise<SignTracker> {
++  const files = await FilesetResolver.forVisionTasks(`${import.meta.env.BASE_URL}wasm`);
++  const bytes = await fetchModelBytes('https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/1/holistic_landmarker.task');
++  let model: HolisticLandmarker;
++  try {
++    model = await HolisticLandmarker.createFromOptions(files, {
++      baseOptions: { modelAssetBuffer: new Uint8Array(bytes), delegate: 'GPU' }, runningMode: 'IMAGE',
++    });
++  } catch {
++    model = await HolisticLandmarker.createFromOptions(files, {
++      baseOptions: { modelAssetBuffer: new Uint8Array(bytes), delegate: 'CPU' }, runningMode: 'IMAGE',
++    });
++  }
++  return {
++    detect(video, timestampMs) {
++      const result = model.detect(video);
++      return { timestampMs, pose: result.poseLandmarks[0] ?? [], leftHand: result.leftHandLandmarks[0] ?? [], rightHand: result.rightHandLandmarks[0] ?? [] };
++    },
++    close: () => model.close(),
++  };
++}
+diff --git a/src/game/references.ts b/src/game/references.ts
+new file mode 100644
+--- /dev/null
++++ b/src/game/references.ts
+@@ -0,0 +1,81 @@
++import { GAME_CONFIG as C } from './config';
++import { normalizeFrame } from './matcher';
++import type { SignReference, SignTracker } from './types';
++
++function waitFor(video: HTMLVideoElement, event: string, signal: AbortSignal): Promise<void> {
++  return new Promise((resolve, reject) => {
++    const cleanup = () => { clearTimeout(timeout); video.removeEventListener(event, done); video.removeEventListener('error', error); signal.removeEventListener('abort', error); };
++    const done = () => { cleanup(); resolve(); };
++    const error = () => { cleanup(); reject(new Error(signal.aborted ? 'Import cancelled.' : 'Could not decode this video. Try an MP4 or WebM.')); };
++    const timeout = setTimeout(error, 15000);
++    video.addEventListener(event, done, { once: true });
++    video.addEventListener('error', error, { once: true });
++    signal.addEventListener('abort', error, { once: true });
++    if (signal.aborted) error();
++  });
++}
++
++export async function extractReference(file: File, tracker: SignTracker, signal: AbortSignal, progress: (fraction: number) => void): Promise<SignReference> {
++  if (!file.type.startsWith('video/') || file.size > C.maxVideoBytes) throw new Error('Choose a video smaller than 100 MB.');
++  const video = document.createElement('video');
++  video.muted = true; video.playsInline = true; video.preload = 'auto';
++  const url = URL.createObjectURL(file);
++  try {
++    const loaded = waitFor(video, 'loadeddata', signal);
++    video.src = url;
++    await loaded;
++    if (!Number.isFinite(video.duration) || video.duration < C.minVideoSeconds || video.duration > C.maxVideoSeconds) throw new Error('Trim your video to between 0.6 and 15 seconds.');
++    const durationMs = video.duration * 1000;
++    const frames: SignReference['frames'] = [];
++    for (let t = 0; t < durationMs; t += 1000 / C.sampleFps) {
++      signal.throwIfAborted();
++      if (Math.abs(video.currentTime - t / 1000) > 0.00001) {
++        const seeked = waitFor(video, 'seeked', signal);
++        video.currentTime = t / 1000;
++        await seeked;
++      }
++      frames.push(tracker.detect(video, t));
++      progress(Math.min(1, (t + 1000 / C.sampleFps) / durationMs));
++      // Let progress, cancellation and navigation paint between inferences.
++      await new Promise(resolve => setTimeout(resolve, 0));
++    }
++    const usable = frames.filter(f => { const n = normalizeFrame(f); return n && (n.left || n.right); }).length;
++    if (usable < C.minFrames || usable / frames.length < C.minCoverage) throw new Error('Not enough clear tracking. Use a front-facing video with face, shoulders and signing hands visible.');
++    return { id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' '), videoUrl: url, durationMs, frames };
++  } catch (error) {
++    URL.revokeObjectURL(url);
++    throw error;
++  } finally {
++    video.removeAttribute('src'); video.load();
++  }
++}
++
++interface StoredReference { reference: Omit<SignReference, 'videoUrl'>; video: Blob }
++function openStore(): Promise<IDBDatabase> {
++  return new Promise((resolve, reject) => {
++    const request = indexedDB.open('justsign-references', 1);
++    request.onupgradeneeded = () => request.result.createObjectStore('signs', { keyPath: 'reference.id' });
++    request.onsuccess = () => resolve(request.result);
++    request.onerror = () => reject(request.error);
++  });
++}
++async function transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
++  const db = await openStore();
++  return new Promise((resolve, reject) => {
++    const tx = db.transaction('signs', mode);
++    const request = action(tx.objectStore('signs'));
++    tx.oncomplete = () => { db.close(); resolve(request.result); };
++    tx.onabort = tx.onerror = () => { db.close(); reject(tx.error ?? new Error('Could not save references.')); };
++  });
++}
++export async function saveReference(ref: SignReference, video: Blob): Promise<void> {
++  const { videoUrl: _url, ...reference } = ref;
++  await transaction('readwrite', store => store.put({ reference, video } satisfies StoredReference));
++}
++export async function loadReferences(): Promise<SignReference[]> {
++  const records = await transaction<StoredReference[]>('readonly', store => store.getAll());
++  return records.map(({ reference, video }) => ({ ...reference, videoUrl: URL.createObjectURL(video) }));
++}
++export async function deleteReference(id: string): Promise<void> {
++  await transaction('readwrite', store => store.delete(id));
++}
+diff --git a/src/game/config.ts b/src/game/config.ts
+new file mode 100644
+--- /dev/null
++++ b/src/game/config.ts
+@@ -0,0 +1,15 @@
++/** Tune recognition here after testing several signers and camera distances. */
++export const GAME_CONFIG = {
++  sampleFps: 12,
++  countdownMs: 3000,
++  feedbackMs: 2500,
++  minVideoSeconds: 0.6,
++  maxVideoSeconds: 15,
++  maxVideoBytes: 100 * 1024 * 1024,
++  minFrames: 6,
++  minCoverage: 0.7,
++  completionScore: 72,
++  spatialTolerance: 0.35,
++  alignmentWindow: 0.25,
++  maxRoundPoints: 1000,
++} as const;
+diff --git a/src/game/game.css b/src/game/game.css
+new file mode 100644
+--- /dev/null
++++ b/src/game/game.css
+@@ -0,0 +1,60 @@
++.justsign { --js-bg: #111414; --js-line: #343c37; --js-lime: #b9fa6d; background: var(--js-bg); color: #f4f5ec; font-family: 'Google Sans', system-ui, sans-serif; padding: 28px clamp(18px, 4vw, 68px); min-height: 100vh; box-sizing: border-box; }
++.justsign * { box-sizing: border-box; }
++.justsign [hidden] { display: none !important; }
++.js-header { display: flex; gap: 20px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--js-line); padding-bottom: 24px; }
++.js-header a { color: #f4f5ec; text-decoration: none; font-size: 14px; }
++.js-header .js-brand { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
++.js-header > span, .js-eyebrow { font-size: 11px; letter-spacing: 2px; color: var(--js-lime); }
++.js-intro { margin: 44px 0 32px; }
++.js-intro h1 { font-size: clamp(34px, 4vw, 60px); line-height: 1.1; letter-spacing: -2px; margin: 12px 0; color: #f4f5ec; }
++.js-intro > p:last-child { color: #b4bdb5; font-size: 16px; }
++.js-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; border: 1px solid var(--js-line); border-radius: 14px; overflow: hidden; margin-bottom: 24px; background: var(--js-line); }
++.js-stats > div { background: #1a201c; padding: 18px 24px; display: flex; flex-direction: column; gap: 8px; }
++.js-stats small { font-size: 10px; letter-spacing: 1.5px; color: #a5b1a7; }
++.js-stats strong { font-size: 28px; color: var(--js-lime); }
++.js-stage { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
++.js-panel { border: 1px solid var(--js-line); border-radius: 16px; overflow: hidden; background: #1a201c; min-width: 0; }
++.js-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; min-height: 58px; }
++.js-panel-head span { font-size: 10px; color: #a5b1a7; letter-spacing: 1px; }
++.js-panel-head strong { font-size: 13px; overflow-wrap: anywhere; }
++.js-video-wrap { position: relative; aspect-ratio: 4 / 3; background: radial-gradient(ellipse at center, #29372e, #151a17); }
++.js-video-wrap video, .js-video-wrap canvas { position: absolute; width: 100%; height: 100%; inset: 0; object-fit: contain; }
++.js-camera-wrap video, .js-camera-wrap canvas, .js-mirrored { transform: scaleX(-1); }
++.js-video-wrap canvas { pointer-events: none; }
++.js-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 22px; text-align: center; font-size: 42px; color: var(--js-lime); }
++.js-empty h2 { font-size: 23px; color: #f4f5ec; margin: 20px 0 8px; }
++.js-empty p, .js-camera-hint { font-size: 14px; line-height: 1.7; color: #acb8ae; }
++.js-camera-hint { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; padding: 24px; }
++.js-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: #10181066; color: var(--js-lime); font-size: clamp(28px, 4vw, 56px); font-weight: 700; text-shadow: 0 2px 10px #111; pointer-events: none; }
++.js-progress { background: #303a32; height: 5px; border-radius: 4px; overflow: hidden; margin-top: 20px; }
++.js-progress > div { width: 0; height: 100%; background: var(--js-lime); }
++.js-feedback { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 70px; }
++.js-feedback p { color: #cbd8cd; font-size: 15px; }
++.js-feedback strong { color: var(--js-lime); font-variant-numeric: tabular-nums; }
++.justsign button, .js-upload { font: inherit; font-size: 14px; color: #edf5e9; background: #29332b; border: 1px solid #48554b; border-radius: 9px; padding: 12px 18px; cursor: pointer; }
++.justsign button:disabled, .js-upload:has(input:disabled) { opacity: .4; cursor: default; }
++.justsign button:focus-visible, .js-upload:focus-within, .justsign a:focus-visible { outline: 3px solid var(--js-lime); outline-offset: 3px; }
++.justsign .js-primary { color: #1a2617; background: var(--js-lime); border-color: var(--js-lime); font-weight: 700; }
++.js-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 40px; }
++.js-mirror { font-size: 13px; color: #bccabd; display: flex; gap: 8px; align-items: center; margin-left: auto; }
++.js-mirror input { accent-color: var(--js-lime); }
++.js-library { border-top: 1px solid var(--js-line); padding-top: 28px; }
++.js-library-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
++.js-library h2, .js-results h2 { font-size: 26px; color: #f4f5ec; margin: 10px 0; }
++.js-upload { position: relative; overflow: hidden; display: inline-flex; align-items: center; }
++.js-upload input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
++.js-help, [data-storage], .justsign footer { font-size: 12px; color: #97a69a; line-height: 1.7; }
++.js-library ol { padding: 0; list-style: none; counter-reset: signs; }
++.js-library li { padding: 14px 0; display: flex; justify-content: space-between; gap: 16px; align-items: center; border-bottom: 1px solid var(--js-line); font-size: 14px; }
++.js-library li span { overflow-wrap: anywhere; }
++.js-library li span::before { counter-increment: signs; content: counter(signs, decimal-leading-zero) ' / '; color: var(--js-lime); }
++.js-library li button { font-size: 12px; padding: 7px 12px; }
++.js-results { margin-top: 32px; padding: 24px; background: #1a201c; border-radius: 14px; overflow-x: auto; }
++.js-results table { width: 100%; border-collapse: collapse; font-size: 14px; }
++.js-results th, .js-results td { padding: 14px 10px; text-align: left; border-bottom: 1px solid var(--js-line); }
++.js-results th { color: var(--js-lime); }
++.justsign footer { margin-top: 40px; padding: 22px 0; border-top: 1px solid var(--js-line); }
++@media (max-width: 760px) { .js-header > span { display: none; } .js-stage { grid-template-columns: 1fr; } .js-stats > div { padding: 14px 10px; } .js-stats strong { font-size: 22px; } .js-stats small { font-size: 8px; letter-spacing: .5px; } .js-mirror { margin-left: 0; width: 100%; } .js-library-heading { align-items: flex-start; } }
++
++.main-content.justsign-main { overflow-y: auto; margin: 0; padding: 0; width: 100%; max-width: none; }
++.task-stage.justsign-stage { padding: 0; width: 100%; max-width: none; }
+diff --git a/src/game/matcher.ts b/src/game/matcher.ts
+new file mode 100644
+--- /dev/null
++++ b/src/game/matcher.ts
+@@ -0,0 +1,94 @@
++import { GAME_CONFIG as C } from './config';
++import type { Landmark, MatchResult, SignFrame } from './types';
++
++type Feature = { body: number[]; left: number[] | null; right: number[] | null };
++const finite = (p: Landmark | undefined): p is Landmark => !!p && [p.x, p.y, p.z].every(Number.isFinite);
++const visible = (p: Landmark | undefined): p is Landmark => finite(p) && (p.visibility ?? 1) >= 0.5;
++
++/** Body coordinates retain hand location; wrist-relative coordinates retain finger shape.
++ * Only image x/y are used: independently estimated hand/pose z origins are incompatible. */
++export function normalizeFrame(frame: SignFrame): Feature | null {
++  const a = frame.pose[11], b = frame.pose[12];
++  if (!visible(a) || !visible(b)) return null;
++  const scale = Math.hypot(a.x - b.x, a.y - b.y);
++  if (scale < 0.03) return null;
++  const origin = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
++  const body: number[] = [];
++  for (const i of [0, 13, 14]) {
++    const p = frame.pose[i];
++    if (!visible(p)) return null;
++    body.push((p.x - origin.x) / scale, (p.y - origin.y) / scale);
++  }
++  function hand(points: Landmark[]): number[] | null {
++    if (points.length !== 21 || !points.every(finite)) return null;
++    const wrist = points[0];
++    const palm = Math.hypot(points[9].x - wrist.x, points[9].y - wrist.y);
++    if (palm < 0.005) return null;
++    // Hand position is as important as shape (e.g. signs at the chin vs forehead).
++    const out = [(wrist.x - origin.x) / scale, (wrist.y - origin.y) / scale];
++    for (const p of points.slice(1)) out.push((p.x - wrist.x) / palm, (p.y - wrist.y) / palm);
++    return out;
++  }
++  return { body, left: hand(frame.leftHand), right: hand(frame.rightHand) };
++}
++
++const rms = (a: number[], b: number[]) => Math.sqrt(a.reduce((s, v, i) => s + (v - b[i]) ** 2, 0) / a.length);
++function distance(a: Feature | null, b: Feature | null): number {
++  if (!a || !b) return 2;
++  const hand = (x: number[] | null, y: number[] | null) => x && y ? 0.55 * rms(x.slice(0, 2), y.slice(0, 2)) + 0.45 * rms(x.slice(2), y.slice(2)) : x || y ? 2 : 0;
++  const count = Number(!!a.left || !!b.left) + Number(!!a.right || !!b.right);
++  return 0.2 * rms(a.body, b.body) + 0.8 * (hand(a.left, b.left) + hand(a.right, b.right)) / Math.max(1, count);
++}
++
++/** Explicit mirror mode swaps anatomical hands and reflects x before normalization. */
++export function mirrorFrame(frame: SignFrame): SignFrame {
++  const flip = (ps: Landmark[]) => ps.map(p => ({ ...p, x: 1 - p.x }));
++  const pose = flip(frame.pose);
++  for (const [a, b] of [[11, 12], [13, 14], [15, 16]]) [pose[a], pose[b]] = [pose[b], pose[a]];
++  return { timestampMs: frame.timestampMs, pose, leftHand: flip(frame.rightHand), rightHand: flip(frame.leftHand) };
++}
++
++function timeline(frames: SignFrame[], durationMs: number): Array<Feature | null> {
++  const sorted = frames.filter(f => Number.isFinite(f.timestampMs) && f.timestampMs >= 0 && f.timestampMs <= durationMs)
++    .sort((a, b) => a.timestampMs - b.timestampMs);
++  let index = 0;
++  return Array.from({ length: Math.max(2, Math.ceil(durationMs / 1000 * C.sampleFps)) }, (_, i) => {
++    const t = i * 1000 / C.sampleFps;
++    while (index + 1 < sorted.length && Math.abs(sorted[index + 1].timestampMs - t) <= Math.abs(sorted[index].timestampMs - t)) index++;
++    const f = sorted[index];
++    // Tracking gaps remain gaps; a single frame cannot fill a whole performance.
++    return f && Math.abs(f.timestampMs - t) <= 1000 / C.sampleFps * 0.75 ? normalizeFrame(f) : null;
++  });
++}
++
++export function compareSigns(reference: SignFrame[], attempt: SignFrame[], durationMs: number, mirror = false): MatchResult {
++  const fail = (feedback: string): MatchResult => ({ score: 0, completed: false, movementScore: 0, timingScore: 0, coverage: 0, feedback });
++  if (!Number.isFinite(durationMs) || durationMs < C.minVideoSeconds * 1000 || durationMs > C.maxVideoSeconds * 1000) return fail('Invalid reference duration.');
++  if (reference.length < C.minFrames || attempt.length < C.minFrames) return fail('Keep your upper body and hands in frame for the full sign.');
++  const ref = timeline(reference, durationMs), user = timeline(mirror ? attempt.map(mirrorFrame) : attempt, durationMs);
++  const valid = (r: Feature | null, u: Feature | null) => !!r && !!u && (!!r.left || !!r.right) && (!r.left || !!u.left) && (!r.right || !!u.right);
++  const referenceCoverage = ref.filter(r => r && (r.left || r.right)).length / ref.length;
++  if (referenceCoverage < C.minCoverage) return fail('Reference tracking is incomplete. Import a clearer video.');
++  const coverage = ref.filter((r, i) => valid(r, user[i])).length / ref.length;
++  const n = ref.length, window = Math.ceil(n * C.alignmentWindow);
++  const dp = Array.from({ length: n + 1 }, () => new Float64Array(n + 1).fill(Infinity));
++  const steps = Array.from({ length: n + 1 }, () => new Uint16Array(n + 1));
++  dp[0][0] = 0;
++  for (let i = 1; i <= n; i++) for (let j = Math.max(1, i - window); j <= Math.min(n, i + window); j++) {
++    const candidates = [[i - 1, j - 1], [i - 1, j], [i, j - 1]];
++    const [a, b] = candidates.reduce((best, p) => dp[p[0]][p[1]] < dp[best[0]][best[1]] ? p : best);
++    dp[i][j] = dp[a][b] + distance(ref[i - 1], user[j - 1]);
++    steps[i][j] = steps[a][b] + 1;
++  }
++  const toScore = (cost: number) => Math.round(100 * Math.exp(-cost / C.spatialTolerance));
++  const movementScore = toScore(dp[n][n] / steps[n][n]);
++  // Unwarped error measures whether the same pose occurred at the expected time.
++  const timingScore = toScore(ref.reduce((s, r, i) => s + distance(r, user[i]), 0) / n);
++  const score = Math.round((movementScore * 0.8 + timingScore * 0.2) * coverage);
++  const completed = coverage >= C.minCoverage && score >= C.completionScore;
++  const feedback = coverage < C.minCoverage ? 'Tracking lost: keep your face, shoulders and hands visible.'
++    : completed ? 'Sign completed! Great movement and hand placement.'
++    : timingScore < movementScore - 12 ? 'Good shapes. Follow the demonstration timing more closely.'
++    : 'Try matching the finger shapes and hand position more closely.';
++  return { score, completed, movementScore, timingScore, coverage, feedback };
++}
