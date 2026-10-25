@@ -16,6 +16,7 @@ function waitFor(video: HTMLVideoElement, event: string, signal: AbortSignal): P
 }
 
 export async function extractReference(file: File, tracker: SignTracker, signal: AbortSignal, progress: (fraction: number) => void): Promise<SignReference> {
+  if (file.type.startsWith('image/')) return extractImage(file, tracker, signal);
   if (!file.type.startsWith('video/') || file.size > C.maxVideoBytes) throw new Error('Choose a video smaller than 100 MB.');
   const video = document.createElement('video');
   video.muted = true; video.playsInline = true; video.preload = 'auto';
@@ -78,4 +79,18 @@ export async function loadReferences(): Promise<SignReference[]> {
 }
 export async function deleteReference(id: string): Promise<void> {
   await transaction('readwrite', store => store.delete(id));
+}
+
+
+async function extractImage(file: File, tracker: SignTracker, signal: AbortSignal): Promise<SignReference> {
+  if (file.size > C.maxVideoBytes) throw new Error('Choose an image smaller than 100 MB.');
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image(); image.src = url;
+    await image.decode(); signal.throwIfAborted();
+    if (!tracker.detectHands) throw new Error('Image tracking is unavailable.');
+    const frame = tracker.detectHands(image, 0);
+    if (!frame.leftHand.length || frame.rightHand.length) throw new Error('Use a clear photo showing exactly one complete hand, including the wrist. Crop out other hands or alphabet chart panels.');
+    return { id: crypto.randomUUID(), kind: 'image', name: file.name.replace(/\.[^.]+$/, ''), videoUrl: url, durationMs: C.imageRoundMs, frames: [frame] };
+  } catch (error) { URL.revokeObjectURL(url); throw error; }
 }

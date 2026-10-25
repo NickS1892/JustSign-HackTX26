@@ -12,7 +12,7 @@ for (const file of ['config', 'matcher']) {
   const source = await readFile(new URL(`../src/game/${file}.ts`, import.meta.url), 'utf8');
   await writeFile(join(dir, `${file}.mjs`), stripTypeScriptTypes(source).replace("'./config'", "'./config.mjs'"));
 }
-const { compareSigns, normalizeFrame, mirrorFrame } = await import(pathToFileURL(join(dir, 'matcher.mjs')));
+const { compareSigns, normalizeFrame, mirrorFrame, compareHandImage } = await import(pathToFileURL(join(dir, 'matcher.mjs')));
 after(() => rm(dir, { recursive: true, force: true }));
 
 function frame(t, motion = true) {
@@ -70,4 +70,20 @@ test('invalid data and invalid reference timing do not pass', () => {
   const bad = ref.map(f => ({ ...f, leftHand: f.leftHand.map(p => ({ ...p, x: NaN })) }));
   assert.equal(compareSigns(ref, bad, 2000).completed, false);
   assert.equal(compareSigns(bad, ref, 2000).completed, false);
+});
+
+
+test('image matching accepts a scaled, translated, mirrored hand without body landmarks', () => {
+  const reference = frame(0, false);
+  const attempts = Array.from({length: 48}, (_, i) => ({timestampMs: i * 1000 / 12, pose: [], rightHand: [], leftHand: reference.leftHand.map(p => ({...p, x: 1 - p.x * .7, y: p.y * .7 + .1}))}));
+  const result = compareHandImage(reference, attempts);
+  assert.equal(result.score, 100); assert.equal(result.completed, true);
+});
+test('image matching rejects missing hands, sparse tracking and different shapes', () => {
+  const reference = frame(0, false);
+  assert.equal(compareHandImage(reference, []).completed, false);
+  const attempts = Array.from({length: 48}, (_, i) => ({...reference, timestampMs: i * 1000 / 12}));
+  assert.equal(compareHandImage(reference, attempts.slice(0, 8)).completed, false);
+  assert.equal(compareHandImage(reference, attempts.map(f => ({...f, leftHand: []}))).completed, false);
+  assert.equal(compareHandImage(reference, attempts.map(f => ({...f, leftHand: f.leftHand.map((p, i) => ({...p, x: p.x + (i === 8 ? .5 : 0)}))}))).completed, false);
 });

@@ -92,3 +92,30 @@ export function compareSigns(reference: SignFrame[], attempt: SignFrame[], durat
     : 'Try matching the finger shapes and hand position more closely.';
   return { score, completed, movementScore, timingScore, coverage, feedback };
 }
+
+
+/** Static 2D handshape similarity, independent of body framing and hand size. */
+export function compareHandImage(reference: SignFrame, attempts: SignFrame[]): MatchResult {
+  function shape(points: Landmark[]) {
+    if (points.length !== 21 || !points.every(finite)) return null;
+    const wrist = points[0], scale = Math.hypot(points[9].x - wrist.x, points[9].y - wrist.y);
+    if (scale < 0.005) return null;
+    return points.flatMap(p => [(p.x - wrist.x) / scale, (p.y - wrist.y) / scale]);
+  }
+  const target = shape(reference.leftHand);
+  let held = 0, longest = 0, previous = -Infinity, total = 0, valid = 0;
+  for (const frame of attempts) {
+    const candidates = [shape(frame.leftHand), shape(frame.rightHand)].filter((s): s is number[] => !!s);
+    const error = target && candidates.length ? Math.min(...candidates.flatMap(s => [rms(target, s), rms(target, s.map((v, i) => i % 2 === 0 ? -v : v))])) : Infinity;
+    const score = Math.round(100 * Math.exp(-error / C.imageTolerance));
+    const gap = frame.timestampMs - previous;
+    held = score >= C.completionScore ? (gap > 0 && gap <= C.imageMaxFrameGapMs ? held + gap : 0) : 0;
+    longest = Math.max(longest, held); previous = frame.timestampMs;
+    total += score; if (Number.isFinite(error)) valid++;
+  }
+  const score = attempts.length ? Math.round(total / attempts.length) : 0;
+  const coverage = Math.min(1, valid / Math.max(1, Math.ceil(C.imageRoundMs / 1000 * C.sampleFps)));
+  const completed = !!target && coverage >= C.minCoverage && longest >= C.imageHoldMs;
+  return { score, completed, movementScore: score, timingScore: Math.min(100, Math.round(longest / C.imageHoldMs * 100)), coverage,
+    feedback: completed ? 'Handshape matched and held!' : 'Keep one complete hand visible. Match the finger positions and palm angle, then hold steady.' };
+}

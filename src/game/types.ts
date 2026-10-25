@@ -9,6 +9,7 @@ export interface SignFrame {
 export interface SignReference {
   id: string;
   name: string;
+  kind?: 'image' | 'video';
   videoUrl: string;
   durationMs: number;
   frames: SignFrame[];
@@ -24,5 +25,7 @@ export interface MatchResult {
 /** A small adapter contract for Person 1's camera / landmark implementation. */
 export interface SignTracker {
   detect(source: HTMLVideoElement, timestampMs: number): SignFrame;
+  detectHands?(source: HTMLVideoElement | HTMLImageElement, timestampMs: number): SignFrame;
   close(): void;
 }
+

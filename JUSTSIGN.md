@@ -44,3 +44,12 @@ Manual browser checks:
 - Test a narrow phone viewport and a laptop. On a second device served over HTTPS, import the same clips and repeat; no synchronization is intended.
 
 In the implementation environment, all nine matcher tests and parsing of the new TypeScript modules passed. A full build and browser execution could not run: the environment returned HTTP 403 for npm package downloads and Chromium downloads. Live-camera accuracy and rendered layouts still need browser verification.
+
+
+## Still-image references
+
+Import a JPG, PNG or WebP photo of exactly one complete hand, including the wrist. No recorded training video is required. Use a photo from a reviewed fingerspelling reference; multi-panel alphabet charts must be cropped to one hand. Illustrations may not be detected by MediaPipe. There is no bundled image dataset.
+
+The image stays visible through countdown and a four-second attempt. HandLandmarker compares wrist-relative, palm-scaled 2D finger coordinates; either hand and horizontal mirroring are accepted. The live Match readout shows current similarity; the final score averages the attempt, including missing frames as zero. Completion requires tracking coverage and a continuous 300ms matching hold. Configurable values live in src/game/config.ts. These scores are heuristic similarity, not calibrated ASL accuracy, and cannot assess motion letters J/Z or signs requiring body location. Video references retain their existing movement matcher.
+
+Validation: 13 Node tests pass, including image matches with translation, scale and mirroring, and rejection of missing/sparse tracking and a changed finger shape. Full build and real-camera accuracy remain unverified in the restricted environment. Test a photo on each laptop independently, enable camera, start the playlist, try the target shape, another shape and no hand, then refresh to verify image persistence.
