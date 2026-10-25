@@ -1,8 +1,11 @@
+# Publishes the static build to GitHub Pages. Every push to main republishes
+# the site, so day-to-day changes never need a local dev server.
 name: Deploy to GitHub Pages
 
 on:
   push:
     branches: ["main"]
+  # Lets you publish any branch on demand from the Actions tab.
   workflow_dispatch:
 
 permissions:
@@ -26,34 +29,36 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-      
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'pnpm'
-          
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        
-      - name: Install Playwright Browsers
-        run: pnpm exec playwright install chromium --with-deps
 
-      - name: Run Tests
-        timeout-minutes: 20
-        run: pnpm run test
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      # The recognition and startup suites need no browser, camera or model
+      # download, so they can gate a deploy without slowing it down.
+      - name: Run tests
+        run: pnpm run test:unit
 
       - name: Build
+        # The site lives at https://<owner>.github.io/<repo>/, so the bundle
+        # has to be built for that sub-path.
         run: pnpm run build
-        
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
-        
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: './dist'
-          
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

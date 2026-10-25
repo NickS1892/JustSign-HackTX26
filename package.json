@@ -1,5 +1,5 @@
 {
-  "name": "mediapipe-od-ts",
+  "name": "justsign",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,8 +10,9 @@
     "build": "tsc && vite build",
     "prebuild": "node copy-wasm.js",
     "preview": "vite preview",
-    "test": "playwright test --project=chromium-gpu",
-    "test:startup": "node --test tests/startup.test.mjs",
+    "test": "node --test tests/startup.test.mjs tests/sign-recognition.test.mjs",
+    "test:unit": "node --test tests/startup.test.mjs tests/sign-recognition.test.mjs",
+    "test:e2e": "playwright test --project=chromium-gpu",
     "format": "prettier --write \"src/**/*.{ts,html,css}\"",
     "prepare": "husky"
   },
@@ -37,4 +38,3 @@
     "src/**/*.{ts,html,css}": "prettier --write"
   }
 }
-

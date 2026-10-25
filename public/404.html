@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>JustSign</title>
+    <script>
+      // GitHub Pages serves this for any unknown path under the site. The app
+      // routes on the hash, so send every stray URL back to the site root and
+      // let the router take it from there.
+      (function () {
+        var segments = location.pathname.split('/').filter(Boolean);
+        var root = segments.length > 1 ? '/' + segments[0] + '/' : '/';
+        location.replace(root + location.hash);
+      })();
+    </script>
+  </head>
+  <body>
+    <p>Redirecting to <a href="/">JustSign</a>…</p>
+  </body>
+</html>
