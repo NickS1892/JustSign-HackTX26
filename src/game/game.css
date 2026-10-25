@@ -61,3 +61,10 @@
 
 
 .js-video-wrap img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+
+.js-reference-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+.js-reference-grid figure { margin: 0; background: #1a201c; padding: 10px; border-radius: 10px; text-align: center; }
+.js-reference-grid img { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; }
+.js-reference-grid figcaption { color: var(--js-lime); font-weight: 700; padding-top: 8px; }
+.js-library > [data-builtin] { margin-bottom: 24px; }
+@media (max-width: 760px) { .js-reference-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

@@ -5,6 +5,9 @@ import { deleteReference, extractReference, loadReferences, saveReference } from
 import { createSignTracker } from './tracker';
 import type { MatchResult, SignFrame, SignReference, SignTracker } from './types';
 
+const BUILTIN_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
+const referenceImageUrl = (letter: string) => `${import.meta.env.BASE_URL}references/asl/${letter}.png`;
+
 type Phase = 'setup' | 'watch' | 'countdown' | 'starting' | 'perform' | 'feedback' | 'results';
 interface RoundResult { name: string; result: MatchResult; points: number }
 
@@ -44,7 +47,7 @@ export class JustSignGame {
         <div class="js-progress" role="progressbar" aria-label="Round progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div></div></div>
         <div class="js-feedback"><p role="status" aria-live="polite" data-status>Import a handshape photo, then enable your camera.</p><strong data-timer></strong></div>
         <div class="js-controls"><button data-camera-button>Enable camera</button><button class="js-primary" data-start disabled>Start playlist →</button><button data-stop disabled>Stop game</button><label class="js-mirror"><input data-mirror type="checkbox"> Mirror the demonstration</label></div>
-        <section class="js-library"><div class="js-library-heading"><div><p class="js-eyebrow">YOUR PRACTICE SET</p><h2>Sign playlist</h2></div><label class="js-upload">+ Import sign images or videos<input data-upload type="file" accept="image/png,image/jpeg,image/webp,video/*" multiple></label></div><p class="js-help">Use a JPG, PNG or WebP photo showing one complete hand. Static photos cannot represent J or Z motion. Video clips may also be used: 0.6–15 seconds each, up to 100 MB. File names become sign names. Videos and coordinates stay in this browser.</p><ol data-playlist></ol><p data-storage></p></section>
+        <section class="js-library"><h2>Start with A–F</h2><p class="js-help">Choose the built-in set, enable your camera, then start the playlist.</p><div class="js-reference-grid">${BUILTIN_LETTERS.map(letter => `<figure><img src="${referenceImageUrl(letter)}" alt="ASL fingerspelling reference for ${letter}"><figcaption>${letter}</figcaption></figure>`).join('')}</div><button data-builtin>Load A–F practice set</button><div class="js-library-heading"><div><p class="js-eyebrow">YOUR PRACTICE SET</p><h2>Sign playlist</h2></div><label class="js-upload">+ Import sign images or videos<input data-upload type="file" accept="image/png,image/jpeg,image/webp,video/*" multiple></label></div><p class="js-help">Use a JPG, PNG or WebP photo showing one complete hand. Static photos cannot represent J or Z motion. Video clips may also be used: 0.6–15 seconds each, up to 100 MB. File names become sign names. Videos and coordinates stay in this browser.</p><ol data-playlist></ol><p data-storage></p></section>
         <section class="js-results" data-results hidden><p class="js-eyebrow">NICE PRACTICE</p><h2>Session complete.</h2><div data-result-list></div></section>
         <footer>Movement similarity is practice feedback, not a certified assessment of ASL accuracy. Use reference signs reviewed by an ASL-fluent signer.</footer>
       </section>`;
@@ -52,6 +55,7 @@ export class JustSignGame {
     this.el<HTMLButtonElement>('[data-camera-button]').onclick = () => void this.enableCamera();
     this.el<HTMLButtonElement>('[data-start]').onclick = () => void this.start();
     this.el<HTMLButtonElement>('[data-stop]').onclick = () => this.cancel('Game stopped. Your playlist is ready for another try.');
+    this.el<HTMLButtonElement>('[data-builtin]').onclick = () => void this.loadBuiltin();
     this.el<HTMLInputElement>('[data-upload]').onchange = e => void this.importVideos(e.target as HTMLInputElement);
     this.el<HTMLInputElement>('[data-mirror]').onchange = () => this.demo.classList.toggle('js-mirrored', this.mirror);
     this.demo.onended = () => { if (this.phase === 'watch') this.beginCountdown(); };
@@ -70,6 +74,7 @@ export class JustSignGame {
     this.el<HTMLButtonElement>('[data-start]').disabled = this.active || this.busy || this.cameraPending || !this.stream?.active || !this.refs.length;
     this.el<HTMLButtonElement>('[data-camera-button]').disabled = this.active || this.busy || this.cameraPending || !!this.stream?.active;
     this.el<HTMLButtonElement>('[data-stop]').disabled = !this.active;
+    this.el<HTMLButtonElement>('[data-builtin]').disabled = this.active || this.busy || this.cameraPending;
     this.el<HTMLInputElement>('[data-upload]').disabled = this.active || this.busy || this.cameraPending;
     this.el<HTMLInputElement>('[data-mirror]').disabled = this.active;
     this.root.querySelectorAll<HTMLButtonElement>('[data-remove]').forEach(b => b.disabled = this.active || this.busy);
@@ -111,6 +116,32 @@ export class JustSignGame {
       this.stream?.getTracks().forEach(t => t.stop()); this.stream = undefined;
       this.status(`Camera could not start: ${error instanceof Error ? error.message : 'check camera permissions and try again.'}`);
     } finally { this.cameraPending = false; this.updateControls(); }
+  }
+  private async loadBuiltin() {
+    if (this.active || this.busy || this.cameraPending) return;
+    this.busy = true; this.updateControls();
+    const errors: string[] = []; let added = 0;
+    try {
+      const tracker = await this.getTracker();
+      for (const letter of BUILTIN_LETTERS) {
+        if (this.refs.some(ref => ref.id === `builtin-${letter}`)) continue;
+        if (this.disposed) return;
+        try {
+          this.status(`Preparing ${letter}…`);
+          const response = await fetch(referenceImageUrl(letter), { signal: this.abort.signal });
+          if (!response.ok) throw new Error('Reference image could not load.');
+          const file = new File([await response.blob()], `${letter}.png`, { type: 'image/png' });
+          const ref = await extractReference(file, tracker, this.abort.signal, () => {});
+          if (this.disposed) { URL.revokeObjectURL(ref.videoUrl); return; }
+          ref.id = `builtin-${letter}`;
+          this.refs.push(ref); added++;
+          try { await saveReference(ref, file); }
+          catch { this.el('[data-storage]').textContent = 'Practice set loaded for this session; browser storage is unavailable.'; }
+        } catch (error) { if (!this.disposed) errors.push(`${letter}: ${error instanceof Error ? error.message : 'Could not prepare image.'}`); }
+      }
+      if (!this.disposed) { this.renderPlaylist(); this.status(`${added} letters added. ${errors.length ? errors.join(' ') : 'Enable your camera and start the playlist.'}`); }
+    } catch (error) { this.status(`Could not prepare the practice set: ${error instanceof Error ? error.message : 'Try again.'}`); }
+    finally { this.busy = false; this.updateControls(); }
   }
   private async importVideos(input: HTMLInputElement) {
     const files = Array.from(input.files ?? []); if (!files.length) return;
