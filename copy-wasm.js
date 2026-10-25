@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
@@ -39,6 +40,7 @@ export function copyWasmFiles(dest = destDir) {
   console.log('Successfully prepared WASM static assets.');
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   copyWasmFiles();
 }
+

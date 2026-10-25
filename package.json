@@ -11,6 +11,7 @@
     "prebuild": "node copy-wasm.js",
     "preview": "vite preview",
     "test": "playwright test --project=chromium-gpu",
+    "test:startup": "node --test tests/startup.test.mjs",
     "format": "prettier --write \"src/**/*.{ts,html,css}\"",
     "prepare": "husky"
   },
@@ -19,8 +20,7 @@
     "@mediapipe/tasks-decision": "^1.1.1",
     "@mediapipe/tasks-retrieval": "^1.1.0",
     "@mediapipe/tasks-text": "^1.1.0",
-    "@mediapipe/tasks-vision": "^1.1.0",
-    "mediapipe-od-ts": "link:"
+    "@mediapipe/tasks-vision": "^1.1.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.0",
@@ -37,3 +37,4 @@
     "src/**/*.{ts,html,css}": "prettier --write"
   }
 }
+
