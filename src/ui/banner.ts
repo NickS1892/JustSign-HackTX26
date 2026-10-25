@@ -397,7 +397,7 @@ export function renderBanner(container: HTMLElement) {
 export function updateBanner(routeKey: string) {
   const container = document.getElementById('docs-banner-container');
   if (container) {
-    if (routeKey === '/home') {
+    if (routeKey === '/home' || routeKey === '/game/justsign') {
       container.style.display = 'none';
       return;
     } else {
@@ -437,3 +437,4 @@ export function updateBanner(routeKey: string) {
     stackblitzLink.href = links.stackblitzUrl;
   }
 }
+

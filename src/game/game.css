@@ -57,4 +57,5 @@
 @media (max-width: 760px) { .js-header > span { display: none; } .js-stage { grid-template-columns: 1fr; } .js-stats > div { padding: 14px 10px; } .js-stats strong { font-size: 22px; } .js-stats small { font-size: 8px; letter-spacing: .5px; } .js-mirror { margin-left: 0; width: 100%; } .js-library-heading { align-items: flex-start; } }
 
 .main-content.justsign-main { overflow-y: auto; margin: 0; padding: 0; width: 100%; max-width: none; }
-.task-stage.justsign-stage { padding: 0; width: 100%; max-width: none; }
+.task-stage.justsign-stage { flex: none; overflow: visible; padding: 0; width: 100%; max-width: none; }
+
