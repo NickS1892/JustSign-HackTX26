@@ -1,46 +1,69 @@
-# JustSign: matching and game interface
+# JustSign: recognition and game interface
 
-Open the app to enter JustSign, or use `#/game/justsign`. Existing MediaPipe demos remain at `#/home`.
+Open the app to enter JustSign, or use `#/game/justsign`. The original MediaPipe demos remain at `#/home`.
 
-1. Run the repository's existing install and dev commands (`pnpm install`, `pnpm dev`). Use HTTPS or localhost for camera access. Vite currently serves at `http://localhost:5174/mediapipe-samples-web/`.
-2. Import front-facing MP4/WebM reference clips, each 0.6–15 seconds and under 100 MB. Include the signer's face, shoulders, elbows and signing hands. Name the files after the signs. Use reviewed demonstrations: this repository does not ship an ASL video dataset.
-3. Wait for coordinate extraction, enable the camera, and start the playlist. The initial MediaPipe model download requires network access.
-4. Each round plays the demonstration, counts down for three seconds, then replays the video while capturing the player's attempt. Feedback and points appear before the next round. Results report overall match, movement, timing and completion per sign. Start again to replay.
-5. Use **Mirror the demonstration** if you want to copy its mirrored hand. The matcher explicitly reflects and swaps the player's anatomical hand channels in this mode.
+## Playing
 
-Imported video blobs and raw landmark sequences persist in this browser's IndexedDB. No webcam video is uploaded or recorded. Clear individual references with Remove. Storage failures leave imports usable for the current session. Different devices maintain separate playlists; this is a single-player game, with no multiplayer networking.
+1. Enable the camera. Camera access needs HTTPS or localhost; the published GitHub Pages site is HTTPS, so it works as-is.
+2. Press **Start session**. The game shows one handshape at a time, drawn from its own vocabulary.
+3. Form the shape with either hand and hold it. **There is no moment you have to hit.** The round is won the instant the shape has been held for `holdMs` (350 ms by default) — a second in, fifteen seconds in, it counts the same. Points carry a speed bonus, but completion does not.
+4. Live coaching under the target names the single thing you are doing worst ("Curl your ring finger into the fist"), and the skeleton over your camera warms toward lime as the hold fills.
+5. **Skip this sign** moves on without points. A round that runs past `roundMs` is scored as a miss and the session continues.
 
-## Integration with Person 1
+Nothing is uploaded or recorded: landmarks are computed in the browser and never leave it.
 
-`src/game/types.ts` defines `SignTracker.detect(video, timestampMs): SignFrame` and `close()`. The included `createSignTracker` uses the existing MediaPipe Tasks Vision dependency with HolisticLandmarker, local WASM, cached model downloads and GPU-to-CPU fallback. To use another tracking implementation, replace this adapter or inject a factory into `new JustSignGame(container, factory)`.
+## The sign database
 
-Frames use unmirrored image coordinates and anatomical left/right hands, with 33 pose landmarks and 21 landmarks per detected hand. Missing hands are empty arrays. Reference timestamps and attempt timestamps start at zero for their respective clip/round, in milliseconds. Mirroring the camera preview is visual only.
+The vocabulary lives in `src/game/sign-database.ts` and is deliberately not reachable from the UI. The table is module-private and `Object.freeze`d; the only exports are `allSigns()` (for the recogniser), `findSign(id)` and `drawSigns(n)`, which hands the game a shuffled round list. There is no import, no listing, no edit and no removal, so a player sees the sign they were asked for and nothing else. Nothing is persisted to the browser either — the old IndexedDB reference store is gone.
 
-## Matching
-
-`compareSigns(referenceFrames, attemptFrames, durationMs, mirror)` returns:
+Each row describes a handshape as bands over the measurements below, with a `coach` line per band:
 
 ```ts
-{ score, completed, movementScore, timingScore, coverage, feedback }
+{ key: 'indexExtension', min: 0.8, weight: 1.4, coach: 'Point your index finger straight up' }
 ```
 
-Scores are 0–100. Shoulder-centered, shoulder-width-scaled body coordinates retain hand placement; palm-scaled, wrist-relative coordinates retain finger shape and orientation. The matcher uses image x/y because hand and body depth values have different origins. Bounded dynamic time warping measures movement similarity, and unwarped comparison penalizes timing differences. Missing or invalid tracking remains a gap rather than becoming a matching pose. A stationary pose cannot pass the tested moving-sign fixture. Defaults require at least 70% tracking coverage and a 72% match score for completion; points are match score × 10, including partial credit for incomplete attempts.
+Scope is static ASL fingerspelling: **A, B, C, D, I, L, O, V, W, Y** — the ten letters that are easiest to tell apart. J and Z need motion and are out of scope. Widening the table is a matter of adding rows, but do it alongside accuracy testing with real signers.
 
-All thresholds, time limits, sampling rate and points live in `src/game/config.ts`. Detection and extraction target 12 FPS. If the device cannot sustain tracking, it may reject attempts for insufficient coverage. Inference uses the main thread in this first implementation; the tracker contract can be moved to an asynchronous worker in a later performance pass.
+## Recognition
 
-This compares an attempt to the expected reference; it is not a trained sign classifier. It does not validate language meaning, facial expression or full 3D palm orientation. Thresholds need calibration with real signers and ASL-fluent review before claiming recognition accuracy.
+`src/game/recognizer.ts` turns 21 hand landmarks into thirteen measurements, all 0–1:
+
+| Group | Keys |
+|---|---|
+| Finger straightness | `thumbExtension`, `indexExtension`, `middleExtension`, `ringExtension`, `pinkyExtension` |
+| Fanning | `indexMiddleSpread`, `middleRingSpread`, `ringPinkySpread`, `thumbSplay` |
+| Contact | `thumbIndexPinch`, `thumbMiddlePinch`, `thumbAcrossPalm`, `fingertipGather` |
+
+Every one is a ratio of distances or an unsigned angle, so none of them changes with hand size, camera distance, rotation or which hand is signing. Left-handed signers and a mirrored preview need no special case; the **Mirror my camera** toggle is purely cosmetic.
+
+`scoreSign` takes the weighted mean of how well each band is met, scaled by the worst-met band so an otherwise perfect shape with one finger in the wrong place cannot quietly pass. `evaluateTarget` judges each hand in frame separately, so a second hand resting in shot can never outvote the signing one. A hold only counts when a hand both clears `minConfidence` for the target **and** reads as that target rather than as some other letter.
+
+`HoldTracker` accumulates hold time and absorbs a dropped frame shorter than `holdGraceMs` instead of restarting, so tracker flicker does not cost a hold. A gap longer than that, or a stall over 250 ms between samples (a hidden tab, a stalled camera), banks nothing.
+
+All thresholds, the hold duration, the round length and the points live in `src/game/config.ts`. Tune them there after testing with several signers and camera distances.
+
+This is shape matching against hand-written geometric rules, not a trained sign classifier. It does not judge language meaning, facial expression or full 3D palm orientation, and the bands need calibration with real signers and ASL-fluent review before anyone claims recognition accuracy.
+
+## Tracking
+
+`src/game/tracker.ts` wraps MediaPipe `HandLandmarker` in `VIDEO` mode with local WASM, cached model downloads and a GPU-to-CPU fallback. `SignTracker`'s replacement, `HandTracker` in `src/game/types.ts`, is a two-method contract — `detect(video, timestampMs): TrackedFrame` and `close()` — so another tracking implementation can be dropped in via `new JustSignGame(container, factory)` without touching recognition or the UI.
 
 ## Validation
 
-Run `node --test tests/sign-matcher.test.mjs` with Node 24+. These tests require no downloads, camera or model. They cover exact matches, body translation/scale, stationary and reversed movement, timing shifts, sparse/lost tracking, explicit mirroring and invalid data. `pnpm build` remains the full TypeScript and Vite check; existing Playwright tests cover the original demo suite.
+```bash
+pnpm test        # recognition + startup suites, no browser, camera or download
+pnpm test:e2e    # the original Playwright demo suite
+pnpm build       # full TypeScript and Vite check
+```
+
+`tests/sign-recognition.test.mjs` builds hands joint by joint (`tests/helpers/synthetic-hand.mjs`) rather than hand-writing feature vectors, so it exercises the real feature maths. It covers scale, translation, rotation and mirror invariance; every letter in the table recognising as itself clear of the others; open and half-formed hands not being forced into a letter; the second-hand case; and the hold rules, including that holding the sign late counts exactly as much as holding it early.
 
 Manual browser checks:
 
-- Import one- and two-handed signs; try the right movement, a different sign and no visible hands.
-- Verify watch → countdown → perform → feedback → next round → results, then replay.
-- Stop mid-round, switch tabs, navigate to demos, and disconnect the camera. Interrupted rounds must not add points; route cleanup must release the camera.
-- Refresh to verify saved clips restore; remove a clip and refresh again.
+- Hold each letter; check the coaching line names something useful while the shape is wrong.
+- Hold the right shape immediately, then try again holding it only in the last seconds of the round. Both must pass.
+- Form a letter, break it briefly, re-form it: a short flicker should not reset the bar, a real break should.
+- Put both hands in frame with the off hand forming a different letter.
+- Stop mid-session, switch tabs, navigate to the demos and disconnect the camera. Interrupted rounds must not add points; leaving the route must release the camera.
 - Deny camera permission or disconnect the network during model loading; retry after correcting the issue.
-- Test a narrow phone viewport and a laptop. On a second device served over HTTPS, import the same clips and repeat; no synchronization is intended.
-
-In the implementation environment, all nine matcher tests and parsing of the new TypeScript modules passed. A full build and browser execution could not run: the environment returned HTTP 403 for npm package downloads and Chromium downloads. Live-camera accuracy and rendered layouts still need browser verification.
+- Test a narrow phone viewport and a laptop, and both left- and right-handed signing.

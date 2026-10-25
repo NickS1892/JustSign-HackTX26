@@ -85,8 +85,15 @@ function localModelsPlugin(modelsDir: string | undefined): Plugin {
   };
 }
 
+/**
+ * Where the site is served from. GitHub Pages puts a project site under
+ * /<repo>/, which CI passes in as BASE_PATH; `pnpm dev` and `pnpm preview`
+ * fall back to the same value so local and published URLs stay identical.
+ */
+const base = process.env.BASE_PATH || '/JustSign-HackTX26/';
+
 export default defineConfig(({ mode }) => ({
-  base: '/mediapipe-samples-web/',
+  base,
   customLogger,
 
   plugins: [
