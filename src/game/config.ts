@@ -31,4 +31,12 @@ export const GAME_CONFIG = {
 
   /** Hands below this tracker score are ignored. */
   minHandScore: 0.5,
+
+  /** Sprint mode: how long the clock runs, and the pause between signs. */
+  sprintMs: 10_000,
+  sprintGapMs: 450,
+  /** Sprint scores one point per sign landed, so it has no points maths. */
+
+  /** How long the green flash stays on screen after a correct sign. */
+  flashMs: 420,
 } as const;

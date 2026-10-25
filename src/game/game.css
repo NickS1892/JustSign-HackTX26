@@ -4,7 +4,7 @@
 .js-header { display: flex; gap: 20px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--js-line); padding-bottom: 24px; }
 .js-header a { color: #f4f5ec; text-decoration: none; font-size: 14px; }
 .js-header .js-brand { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
-.js-header > span, .js-eyebrow { font-size: 11px; letter-spacing: 2px; color: var(--js-lime); }
+.js-eyebrow { font-size: 11px; letter-spacing: 2px; color: var(--js-lime); }
 .js-intro { margin: 44px 0 32px; }
 .js-intro h1 { font-size: clamp(34px, 4vw, 60px); line-height: 1.1; letter-spacing: -2px; margin: 12px 0; color: #f4f5ec; }
 .js-intro > p:last-child { color: #b4bdb5; font-size: 16px; }
@@ -23,7 +23,7 @@
 .js-video-wrap canvas { pointer-events: none; }
 .js-camera-hint { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; padding: 24px; font-size: 14px; line-height: 1.7; color: #acb8ae; }
 .js-target { display: grid; place-items: center; }
-.js-letter { font-size: clamp(110px, 17vw, 210px); font-weight: 700; line-height: 1; color: var(--js-lime); text-shadow: 0 6px 34px #b9fa6d33; }
+.js-letter { font-size: clamp(96px, 15vw, 190px); font-weight: 700; line-height: 1.1; color: var(--js-lime); text-shadow: 0 6px 34px #b9fa6d33; text-align: center; padding: 0 12px; }
 .js-coach { padding: 16px 20px; border-top: 1px solid var(--js-line); min-height: 86px; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
 .js-coach p { font-size: 14px; line-height: 1.6; color: #b4bdb5; }
 .js-coach .js-coach-live:not(:empty) { color: var(--js-lime); font-weight: 500; }
@@ -39,14 +39,31 @@
 .justsign button:focus-visible, .justsign a:focus-visible { outline: 3px solid var(--js-lime); outline-offset: 3px; }
 .justsign .js-primary { color: #1a2617; background: var(--js-lime); border-color: var(--js-lime); font-weight: 700; }
 .js-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 40px; }
-.js-mirror { font-size: 13px; color: #bccabd; display: flex; gap: 8px; align-items: center; margin-left: auto; }
-.js-mirror input { accent-color: var(--js-lime); }
+.js-toggle { font-size: 13px; color: #bccabd; display: flex; gap: 8px; align-items: center; }
+.js-toggle:first-of-type { margin-left: auto; }
+.js-toggle input { accent-color: var(--js-lime); }
+
+.js-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 24px; }
+.js-modes button { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; text-align: left; padding: 16px 20px; }
+.js-modes strong { font-size: 15px; }
+.js-modes small { font-size: 12px; color: #a5b1a7; }
+.js-modes .js-mode-on { border-color: var(--js-lime); background: #23301f; }
+.js-modes .js-mode-on strong { color: var(--js-lime); }
+
+/* Full-bleed confirmation that a sign landed, for players who have the sound off. */
+.js-flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 5; background: radial-gradient(ellipse at center, #b9fa6d2e, #b9fa6d12 45%, transparent 72%); box-shadow: inset 0 0 0 6px #b9fa6dcc; }
+.js-flash-on { animation: js-flash-pulse 420ms ease-out; }
+@keyframes js-flash-pulse { 0% { opacity: 0; } 18% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .js-flash-on { animation-duration: 240ms; } }
 .js-results { margin-top: 32px; padding: 24px; background: #1a201c; border-radius: 14px; overflow-x: auto; }
 .js-results table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .js-results th, .js-results td { padding: 14px 10px; text-align: left; border-bottom: 1px solid var(--js-line); }
 .js-results th { color: var(--js-lime); }
 .justsign footer { font-size: 12px; color: #97a69a; line-height: 1.7; margin-top: 40px; padding: 22px 0; border-top: 1px solid var(--js-line); }
-@media (max-width: 760px) { .js-header > span { display: none; } .js-stage { grid-template-columns: 1fr; } .js-stats > div { padding: 14px 10px; } .js-stats strong { font-size: 22px; } .js-stats small { font-size: 8px; letter-spacing: .5px; } .js-mirror { margin-left: 0; width: 100%; } }
+@media (max-width: 760px) { .js-stage { grid-template-columns: 1fr; } .js-stats > div { padding: 14px 10px; } .js-stats strong { font-size: 22px; } .js-stats small { font-size: 8px; letter-spacing: .5px; } .js-modes { grid-template-columns: 1fr; } .js-toggle:first-of-type { margin-left: 0; } .js-controls { gap: 10px; } }
+
+/* Outranks the demo shell's `.mobile-header { display: flex !important }`. */
+body.justsign-route .mobile-header { display: none !important; }
 
 .main-content.justsign-main { overflow-y: auto; margin: 0; padding: 0; width: 100%; max-width: none; }
 .task-stage.justsign-stage { flex: none; overflow: visible; padding: 0; width: 100%; max-width: none; }

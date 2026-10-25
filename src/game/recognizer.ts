@@ -5,6 +5,7 @@ import type {
   FeatureVector,
   HandObservation,
   Landmark,
+  MotionTemplate,
   Recognition,
   SignDefinition,
 } from './types';
@@ -84,6 +85,28 @@ function spread(hand: Landmark[], a: keyof typeof CHAINS, b: keyof typeof CHAINS
   return remap(angle, 0.06, 0.5);
 }
 
+/** How much two neighbouring fingers have closed across each other, 0–1. */
+function crossing(hand: Landmark[]): number {
+  const [indexMcp, indexTip] = [hand[CHAINS.index[0]], hand[CHAINS.index[3]]];
+  const [middleMcp, middleTip] = [hand[CHAINS.middle[0]], hand[CHAINS.middle[3]]];
+  const along = {
+    x: indexTip.x - indexMcp.x + middleTip.x - middleMcp.x,
+    y: indexTip.y - indexMcp.y + middleTip.y - middleMcp.y,
+    z: indexTip.z - indexMcp.z + middleTip.z - middleMcp.z,
+  };
+  const length = Math.hypot(along.x, along.y, along.z);
+  if (length < 1e-9) return 0;
+  const unit = { x: along.x / length, y: along.y / length, z: along.z / length };
+  const across = (a: Landmark, b: Landmark) => {
+    const d = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+    const projected = d.x * unit.x + d.y * unit.y + d.z * unit.z;
+    return Math.hypot(d.x - projected * unit.x, d.y - projected * unit.y, d.z - projected * unit.z);
+  };
+  const knuckles = across(indexMcp, middleMcp);
+  if (knuckles < 1e-9) return 0;
+  return 1 - remap(across(indexTip, middleTip) / knuckles, 0, 1.1);
+}
+
 /**
  * Turns 21 landmarks into the scale-free, rotation-free, mirror-free
  * measurements the sign database is written against. Nothing here depends on
@@ -107,6 +130,48 @@ export function extractFeatures(landmarks: Landmark[]): FeatureVector | null {
     ...[CHAINS.index[0], CHAINS.middle[0], CHAINS.ring[0]].map(i => dist(thumbTip, landmarks[i])),
   );
 
+  // Where the hand points, in image space: 1 fingers up, 0.5 sideways, 0 down.
+  // Only the vertical component is used, so it stays mirror invariant while
+  // separating K from P and G from Q.
+  const palmAxisY = (landmarks[WRIST].y - landmarks[CHAINS.middle[0]].y) / palm;
+
+  /**
+   * Which gap between the fingers the thumb is tucked into — the one thing
+   * that separates M, N and T, which are otherwise the same fist.
+   *
+   * The gaps are only a finger's width apart, so a plain distance reads high
+   * for all three at once. Each gap is scored on how much *closer* the thumb
+   * is to it than to its neighbours, then damped by how near the thumb is to
+   * any of them at all, which keeps a thumb held out at the side near zero.
+   */
+  const gapDistance = (a: keyof typeof CHAINS, b: keyof typeof CHAINS) => {
+    const first = landmarks[CHAINS[a][1]];
+    const second = landmarks[CHAINS[b][1]];
+    return dist(thumbTip, {
+      x: (first.x + second.x) / 2,
+      y: (first.y + second.y) / 2,
+      z: (first.z + second.z) / 2,
+    });
+  };
+  const gaps = {
+    index: gapDistance('index', 'middle'),
+    middle: gapDistance('middle', 'ring'),
+    ring: gapDistance('ring', 'pinky'),
+  };
+  const inGap = (which: keyof typeof gaps) => {
+    const mine = gaps[which];
+    const nearestOther = Math.min(...Object.entries(gaps).filter(([k]) => k !== which).map(([, d]) => d));
+    const proximity = 1 - remap(mine / palm, 0.1, 0.55);
+    const relative = clamp01(0.5 + (nearestOther - mine) / (0.45 * palm));
+    return proximity * relative;
+  };
+
+  // A folded finger lying over the thumb ends up closer to the wrist than the
+  // thumb knuckle it covers; this reads the stacking without needing depth.
+  const coveringTips = [CHAINS.index[3], CHAINS.middle[3], CHAINS.ring[3]].map(i => landmarks[i]);
+  const thumbKnuckle = landmarks[CHAINS.thumb[1]];
+  const covered = coveringTips.filter(tip => dist(tip, thumbKnuckle) < palm * 0.75).length;
+
   return {
     thumbExtension: thumbExtension(landmarks),
     indexExtension: extension(landmarks, CHAINS.index),
@@ -124,8 +189,20 @@ export function extractFeatures(landmarks: Landmark[]): FeatureVector | null {
     ),
     thumbIndexPinch: 1 - remap(dist(thumbTip, landmarks[CHAINS.index[3]]) / palm, 0, 0.9),
     thumbMiddlePinch: 1 - remap(dist(thumbTip, landmarks[CHAINS.middle[3]]) / palm, 0, 0.9),
+    thumbRingPinch: 1 - remap(dist(thumbTip, landmarks[CHAINS.ring[3]]) / palm, 0, 0.9),
+    thumbPinkyPinch: 1 - remap(dist(thumbTip, landmarks[CHAINS.pinky[3]]) / palm, 0, 0.9),
     thumbAcrossPalm: 1 - remap(overFingers / palm, 0, 1),
     fingertipGather: 1 - remap(gathered / pairs / palm, 0, 0.75),
+    pointingUp: clamp01((palmAxisY + 1) / 2),
+    thumbInIndexGap: inGap('index'),
+    thumbInMiddleGap: inGap('middle'),
+    thumbInRingGap: inGap('ring'),
+    // Crossed fingers (R) end up side by side across the hand rather than
+    // apart. Separation is measured across the fingers, ignoring how far
+    // along them the tips sit, so two fingers of different lengths held
+    // parallel still read as not crossed.
+    indexMiddleConverge: crossing(landmarks),
+    thumbUnderFingers: covered / 3,
   };
 }
 
@@ -165,10 +242,17 @@ export function scoreSign(features: FeatureVector, sign: SignDefinition): SignSc
   return { confidence: (total / weights) * (0.6 + 0.4 * worst), weakest };
 }
 
-/** The database row that best explains one already-extracted hand. */
+/**
+ * The database row that best explains one already-extracted hand.
+ *
+ * Signs that are a movement are left out: J and Z share their handshape with
+ * I and a plain point, so a still frame can never be one. They are reached
+ * only by being the round's target and completing their path.
+ */
 export function recognizeFeatures(features: FeatureVector): Recognition {
   let best: Recognition = { confidence: 0, runnerUp: 0 };
   for (const sign of allSigns()) {
+    if (sign.motion) continue;
     const { confidence } = scoreSign(features, sign);
     if (confidence > best.confidence) best = { sign, confidence, runnerUp: best.confidence };
     else if (confidence > best.runnerUp) best = { ...best, runnerUp: confidence };
@@ -200,6 +284,8 @@ export interface TargetEvaluation {
   matching: boolean;
   /** What that hand is doing worst, for live coaching. */
   weakest?: Expectation;
+  /** The hand that fits best, for signs that also have a path to trace. */
+  landmarks?: Landmark[];
 }
 
 /**
@@ -213,20 +299,124 @@ export function evaluateTarget(hands: readonly HandObservation[], target: SignDe
   let confidence = 0;
   let matching = false;
   let weakest: Expectation | undefined;
+  let landmarks: Landmark[] | undefined;
   for (const hand of hands) {
     if (hand.score < C.minHandScore) continue;
     const features = extractFeatures(hand.landmarks);
     if (!features) continue;
     const scored = scoreSign(features, target);
-    if (scored.confidence > confidence) { confidence = scored.confidence; weakest = scored.weakest; }
-    if (scored.confidence >= C.minConfidence && recognizeFeatures(features).sign?.id === target.id) matching = true;
+    if (scored.confidence > confidence) {
+      confidence = scored.confidence;
+      weakest = scored.weakest;
+      landmarks = hand.landmarks;
+    }
+    if (scored.confidence < C.minConfidence) continue;
+    // A moving sign shares its handshape with a still one (J with I, Z with a
+    // plain point), so it is the path that tells them apart, not the argmax.
+    if (target.motion || recognizeFeatures(features).sign?.id === target.id) matching = true;
   }
-  return { confidence, matching, weakest };
+  return { confidence, matching, weakest, landmarks };
 }
 
 /** True when a reading is confident enough, and clear enough of the runner-up, to act on. */
 export function isDecisive(reading: Recognition): boolean {
   return !!reading.sign && reading.confidence >= C.minConfidence && reading.confidence - reading.runnerUp >= C.minMargin;
+}
+
+/** Where a tracked fingertip was, in palm widths relative to the wrist. */
+interface TipSample { t: number; x: number; y: number }
+
+const TIP_INDEX: Record<MotionTemplate['tip'], number> = {
+  thumb: 4,
+  index: 8,
+  middle: 12,
+  ring: 16,
+  pinky: 20,
+};
+
+/**
+ * Where the traced fingertip is on screen, in palm widths.
+ *
+ * Drawing a J or a Z moves the whole hand, so this has to be an absolute
+ * position rather than one relative to the wrist. Dividing by palm width
+ * keeps the distances the template asks for the same whether the signer is
+ * close to the camera or far from it.
+ */
+export function tipPosition(landmarks: Landmark[], tip: MotionTemplate['tip']): TipSample | null {
+  if (landmarks.length !== 21 || !landmarks.every(finite)) return null;
+  const palm = dist(landmarks[WRIST], landmarks[CHAINS.middle[0]]);
+  if (palm < 1e-6) return null;
+  const point = landmarks[TIP_INDEX[tip]];
+  // Image y grows downward; flip it so "up" in the template means up on screen.
+  return { t: 0, x: point.x / palm, y: -point.y / palm };
+}
+
+/**
+ * Watches a fingertip trace a path.
+ *
+ * J and Z are the only letters that are a movement rather than a pose, so they
+ * need more than a held shape. The template lists legs the tip must travel in
+ * order; each leg completes once the tip has moved far enough along its
+ * direction since the previous leg finished. Travel is measured in palm
+ * widths, so hand size and camera distance do not matter. Sideways legs
+ * ignore which way, which keeps the path the same for a left-handed signer.
+ * The handshape has to stay correct throughout, so an idle hand drifting
+ * across the frame cannot complete a path.
+ */
+export class MotionTracker {
+  private samples: TipSample[] = [];
+  private leg = 0;
+  private anchor?: TipSample;
+
+  private template: MotionTemplate;
+
+  constructor(template: MotionTemplate) {
+    this.template = template;
+  }
+
+  reset(): void {
+    this.samples = [];
+    this.leg = 0;
+    this.anchor = undefined;
+  }
+
+  /** Feeds one sample and returns how much of the path is done, 0–1. */
+  update(nowMs: number, landmarks: Landmark[] | null): number {
+    const sample = landmarks ? tipPosition(landmarks, this.template.tip) : null;
+    if (!sample) {
+      // Losing the hand drops the path: half a J is not a J.
+      this.reset();
+      return 0;
+    }
+    sample.t = nowMs;
+    this.samples.push(sample);
+    const cutoff = nowMs - this.template.windowMs;
+    while (this.samples.length && this.samples[0].t < cutoff) this.samples.shift();
+    if (!this.anchor || this.anchor.t < cutoff) {
+      this.anchor = this.samples[0];
+      this.leg = 0;
+    }
+
+    for (let guard = 0; guard < this.template.legs.length && this.leg < this.template.legs.length; guard++) {
+      const leg = this.template.legs[this.leg];
+      const dx = sample.x - this.anchor.x;
+      const dy = sample.y - this.anchor.y;
+      const travelled =
+        leg.direction === 'up' ? dy : leg.direction === 'down' ? -dy : Math.abs(dx);
+      if (travelled < leg.travel) break;
+      this.leg++;
+      this.anchor = { ...sample };
+    }
+    return this.progress;
+  }
+
+  get progress(): number {
+    return clamp01(this.leg / this.template.legs.length);
+  }
+
+  get complete(): boolean {
+    return this.leg >= this.template.legs.length;
+  }
 }
 
 /**

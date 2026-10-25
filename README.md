@@ -1,6 +1,8 @@
 # JustSign
 
-Form an ASL handshape in front of your webcam and hold it. The moment the shape is right, it counts — there is no beat to hit and nothing to import. See [JUSTSIGN.md](JUSTSIGN.md) for how recognition, the sign database and tuning work. The original MediaPipe demos remain at `#/home`.
+Form an ASL handshape in front of your webcam and hold it. The moment the shape is right, it counts — there is no beat to hit and nothing to import. Two modes: **Practice** (eight signs, no rush) and a **10-second sprint** (land as many as you can). Both keep a high score in your browser.
+
+It knows **the whole ASL alphabet, A–Z**, plus the UT **Hook 'em Horns** handshape. J and Z are movements rather than poses, so those two are drawn in the air. See [JUSTSIGN.md](JUSTSIGN.md) for how recognition, the sign database and tuning work — including the letters that are genuinely hard to tell apart.
 
 ## Play it
 
@@ -74,7 +76,7 @@ This version is **single player**. Room codes and synchronized battles are not i
 ## Testing
 
 ```bash
-pnpm test      # recognition + startup suites: no browser, camera or model download
+pnpm test      # recognition, high scores and startup: no browser, camera or model download
 pnpm test:e2e  # the Playwright suite covering the MediaPipe demos
 ```
 
