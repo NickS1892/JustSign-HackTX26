@@ -1,0 +1,31 @@
+<div class="task-container">
+  <div class="controls-panel">
+    <div id="dm-model-panel"></div>
+
+    <div class="divider"></div>
+
+    <div class="status-group">
+      <div id="status-message" class="status-message">Initializing...</div>
+      <div id="inference-time" class="inference-time">Inference Time: - ms</div>
+    </div>
+  </div>
+
+  <div class="output-panel">
+    <div class="output-header">
+      <h2 id="dm-header-title">Decision Maker</h2>
+    </div>
+    <div class="viewport">
+      <div id="dm-text-view" class="dm-view"></div>
+      <div id="dm-vision-view" class="dm-view" style="display: none"></div>
+    </div>
+  </div>
+
+  <style>
+    .dm-view {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+  </style>
+</div>
